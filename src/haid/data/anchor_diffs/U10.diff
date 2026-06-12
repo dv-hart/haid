@@ -1,0 +1,129 @@
+diff --git a/pkg/cloudprovider/drift.go b/pkg/cloudprovider/drift.go
+index 6ad89f92e9da..e8257a1589a3 100644
+--- a/pkg/cloudprovider/drift.go
++++ b/pkg/cloudprovider/drift.go
+@@ -65,7 +65,10 @@ func (c *CloudProvider) isNodeClassDrifted(ctx context.Context, nodeClaim *karpv
+ 	if err != nil {
+ 		return "", fmt.Errorf("calculating subnet drift, %w", err)
+ 	}
+-	capacityReservationsDrifted := c.isCapacityReservationDrifted(instance, nodeClass)
++	capacityReservationsDrifted, err := c.isCapacityReservationDrifted(ctx, nodeClaim.Status.ProviderID, instance, nodeClass)
++	if err != nil {
++		return "", fmt.Errorf("calculating capacity reservation drift, %w", err)
++	}
+ 	placementGroupDrifted := c.isPlacementGroupDrifted(ctx, nodeClaim, nodeClass)
+ 	drifted := lo.FindOrElse([]cloudprovider.DriftReason{
+ 		securitygroupDrifted,
+@@ -137,16 +140,28 @@ func (c *CloudProvider) areSecurityGroupsDrifted(ec2Instance *instance.Instance,
+ }
+ 
+ // Checks if capacity reservations are drifted, by comparing the capacity reservations persisted to the NodeClass to
+-// the instance's capacity reservation.
++// the instance's capacity reservation. When stale instance information isn't useful enough to determine drift, we
++// skip the cache and fallback to the EC2 API.
+ // NOTE: We handle drift dynamically for capacity reservations rather than relying on the offerings inducing drift since
+ // a reserved instance may fall back to on-demand. Relying on offerings could result in drift occurring before fallback
+ // would cancel it out.
+-func (c *CloudProvider) isCapacityReservationDrifted(instance *instance.Instance, nodeClass *v1.EC2NodeClass) cloudprovider.DriftReason {
++func (c *CloudProvider) isCapacityReservationDrifted(ctx context.Context, providerID string, i *instance.Instance, nodeClass *v1.EC2NodeClass) (cloudprovider.DriftReason, error) {
++	if i.CapacityReservationDetails == nil {
++		return "", nil
++	}
+ 	capacityReservationIDs := sets.New(lo.Map(nodeClass.Status.CapacityReservations, func(cr v1.CapacityReservation, _ int) string { return cr.ID })...)
+-	if instance.CapacityReservationDetails != nil && !capacityReservationIDs.Has(instance.CapacityReservationDetails.ID) {
+-		return CapacityReservationDrift
++	if capacityReservationIDs.Has(i.CapacityReservationDetails.ID) {
++		return "", nil
+ 	}
+-	return ""
++	// skip the instance type cache to get up-to-date instance info
++	i, err := c.getInstance(ctx, providerID, instance.SkipCache)
++	if err != nil {
++		return "", err
++	}
++	if i.CapacityReservationDetails != nil && !capacityReservationIDs.Has(i.CapacityReservationDetails.ID) {
++		return CapacityReservationDrift, nil
++	}
++	return "", nil
+ }
+ 
+ // isPlacementGroupDrifted checks if the node's placement group ID label no longer matches the EC2NodeClass's
+@@ -179,13 +194,13 @@ func (c *CloudProvider) areStaticFieldsDrifted(nodeClaim *karpv1.NodeClaim, node
+ 	return lo.Ternary(nodeClassHash != nodeClaimHash, NodeClassDrift, "")
+ }
+ 
+-func (c *CloudProvider) getInstance(ctx context.Context, providerID string) (*instance.Instance, error) {
++func (c *CloudProvider) getInstance(ctx context.Context, providerID string, options ...instance.Options) (*instance.Instance, error) {
+ 	// Get InstanceID to fetch from EC2
+ 	instanceID, err := utils.ParseInstanceID(providerID)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	instance, err := c.instanceProvider.Get(ctx, instanceID)
++	instance, err := c.instanceProvider.Get(ctx, instanceID, options...)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("getting instance, %w", err)
+ 	}
+diff --git a/pkg/cloudprovider/suite_test.go b/pkg/cloudprovider/suite_test.go
+index 125db15313b6..1e93c6d3c857 100644
+--- a/pkg/cloudprovider/suite_test.go
++++ b/pkg/cloudprovider/suite_test.go
+@@ -944,6 +944,46 @@ var _ = Describe("CloudProvider", func() {
+ 			Expect(err).ToNot(HaveOccurred())
+ 			Expect(isDrifted).To(Equal(cloudprovider.CapacityReservationDrift))
+ 		})
++		It("should not drift when capacity reservation falls back to on-demand", func() {
++			// Reflect capacity reservation and in the instance
++			nodeClass.Status.CapacityReservations = []v1.CapacityReservation{
++				{
++					AvailabilityZone:      "test-zone-1a",
++					ID:                    "cr-foo",
++					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
++					InstanceType:          "m5.large",
++					OwnerID:               "012345678901",
++					State:                 v1.CapacityReservationStateActive,
++					ReservationType:       v1.CapacityReservationTypeDefault,
++				},
++			}
++			out := OWNEREnv.EC2API.DescribeInstancesBehavior.Output.Clone()
++			out.Reservations[0].Instances[0].SpotInstanceRequestId = nil
++			out.Reservations[0].Instances[0].CapacityReservationId = lo.ToPtr("cr-foo")
++			out.Reservations[0].Instances[0].CapacityReservationSpecification = &ec2types.CapacityReservationSpecificationResponse{
++				CapacityReservationPreference: ec2types.CapacityReservationPreferenceCapacityReservationsOnly,
++			}
++			OWNEREnv.EC2API.DescribeInstancesBehavior.Output.Set(out)
++			ExpectApplied(ctx, env.Client, nodeClass)
++
++			// Populate instance cache
++			isDrifted, err := cloudProvider.IsDrifted(ctx, nodeClaim)
++			Expect(err).ToNot(HaveOccurred())
++			Expect(isDrifted).To(Equal(corecloudprovider.DriftReason("")))
++
++			// Remove capacity reservation from NodeClass status and in the instance
++			nodeClass.Status.CapacityReservations = []v1.CapacityReservation{}
++			ExpectApplied(ctx, env.Client, nodeClass)
++			out = OWNEREnv.EC2API.DescribeInstancesBehavior.Output.Clone()
++			out.Reservations[0].Instances[0].SpotInstanceRequestId = nil
++			out.Reservations[0].Instances[0].CapacityReservationId = nil
++			out.Reservations[0].Instances[0].CapacityReservationSpecification = nil
++			OWNEREnv.EC2API.DescribeInstancesBehavior.Output.Set(out)
++
++			isDrifted, err = cloudProvider.IsDrifted(ctx, nodeClaim)
++			Expect(err).ToNot(HaveOccurred())
++			Expect(isDrifted).To(Equal(corecloudprovider.DriftReason("")))
++		})
+ 		It("should not return drifted if the security groups match", func() {
+ 			isDrifted, err := cloudProvider.IsDrifted(ctx, nodeClaim)
+ 			Expect(err).ToNot(HaveOccurred())
+diff --git a/pkg/providers/instance/instance.go b/pkg/providers/instance/instance.go
+index 50c82da09cbe..e64164be1cad 100644
+--- a/pkg/providers/instance/instance.go
++++ b/pkg/providers/instance/instance.go
+@@ -81,6 +81,7 @@ var (
+ 
+ type Provider interface {
+ 	Create(context.Context, *v1.EC2NodeClass, *karpv1.NodeClaim, map[string]string, []*cloudprovider.InstanceType) (*Instance, error)
++	// Retrieves instance from a cache with no TTL or EC2. This defaults to cache, use SkipCache to force an EC2 lookup.
+ 	Get(context.Context, string, ...Options) (*Instance, error)
+ 	List(context.Context) ([]*Instance, error)
+ 	Delete(context.Context, string) error

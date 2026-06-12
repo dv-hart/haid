@@ -1,0 +1,352 @@
+diff --git a/src/Data/TemplateData.js b/src/Data/TemplateData.js
+index 95b5246c2..a15316839 100644
+--- a/src/Data/TemplateData.js
++++ b/src/Data/TemplateData.js
+@@ -24,6 +24,23 @@ const debugDev = createDebug("Dev:PROJECT:TemplateData");
+ class TemplateDataParseError extends PROJECTBaseError {}
+ 
+ class TemplateData {
++	// order is important (json not included)
++	#eligiblePrioritizedExtensions = [
++		"js",
++		"cjs",
++		"mjs",
++		...(isTypeScriptSupported() ? ["ts", "cts", "mts"] : []),
++	];
++
++	// order is important
++	#globalDataOrderedExtensions = [
++		"json",
++		"mjs",
++		"cjs",
++		"js",
++		...(isTypeScriptSupported() ? ["mts", "cts", "ts"] : []),
++	];
++
+ 	constructor(templateConfig) {
+ 		if (!templateConfig || templateConfig.constructor.name !== "TemplateConfig") {
+ 			throw new Error(
+@@ -239,7 +256,7 @@ class TemplateData {
+ 	}
+ 
+ 	getGlobalDataExtensionPriorities() {
+-		return this.getUserDataExtensions().concat(["json", "mjs", "cjs", "js"]);
++		return this.getUserDataExtensions().concat(this.#globalDataOrderedExtensions);
+ 	}
+ 
+ 	static calculateExtensionPriority(path, priorities) {
+@@ -508,7 +525,7 @@ class TemplateData {
+ 	async getDataValue(path) {
+ 		let extension = TemplatePath.getExtension(path);
+ 
+-		if (extension === "js" || extension === "cjs" || extension === "mjs") {
++		if (this.#eligiblePrioritizedExtensions.includes(extension)) {
+ 			// JS data file or require’d JSON (no preprocessing needed)
+ 			if (!this.exists(path)) {
+ 				return {};
+@@ -520,7 +537,12 @@ class TemplateData {
+ 			dataBench.before();
+ 
+ 			let type = "cjs";
+-			if (extension === "mjs" || (extension === "js" && this.isEsm)) {
++			if (
++				extension === "mjs" ||
++				(extension === "js" && this.isEsm) ||
++				extension === "mts" ||
++				(extension === "ts" && this.isEsm)
++			) {
+ 				type = "esm";
+ 			}
+ 
+@@ -573,9 +595,9 @@ class TemplateData {
+ 
+ 			// data suffix
+ 			if (suffix) {
+-				paths.push(base + suffix + ".js");
+-				paths.push(base + suffix + ".cjs");
+-				paths.push(base + suffix + ".mjs");
++				for (let extension of this.#eligiblePrioritizedExtensions) {
++					paths.push(base + suffix + "." + extension);
++				}
+ 			}
+ 			paths.push(base + suffix + ".json"); // default: .OWNERdata.json
+ 
+diff --git a/test/TemplateDataTest.js b/test/TemplateDataTest.js
+index 3aa5c7467..3acc5eb7c 100644
+--- a/test/TemplateDataTest.js
++++ b/test/TemplateDataTest.js
+@@ -204,7 +204,7 @@ test("Global Dir Directory", async (t) => {
+   let dataObj = new TemplateData(PROJECTConfig);
+   dataObj.setProjectUsingEsm(true);
+ 
+-  t.deepEqual(dataObj.getGlobalDataGlob(), ["./_data/**/*.{json,mjs,cjs,js}"]);
++  t.deepEqual(dataObj.getGlobalDataGlob(), [`./_data/**/*.{json,mjs,cjs,js${isTypeScriptSupported() ? ",mts,cts,ts" : ""}}`]);
+ });
+ 
+ test("Global Dir Directory with Constructor Path Arg", async (t) => {
+@@ -217,7 +217,7 @@ test("Global Dir Directory with Constructor Path Arg", async (t) => {
+   let dataObj = new TemplateData(PROJECTConfig);
+   dataObj.setProjectUsingEsm(true);
+ 
+-  t.deepEqual(dataObj.getGlobalDataGlob(), ["./test/stubs/_data/**/*.{json,mjs,cjs,js}"]);
++  t.deepEqual(dataObj.getGlobalDataGlob(), [`./test/stubs/_data/**/*.{json,mjs,cjs,js${isTypeScriptSupported() ? ",mts,cts,ts" : ""}}`]);
+ });
+ 
+ test("getAllGlobalData() with other data files", async (t) => {
+@@ -380,12 +380,22 @@ test("getLocalDataPaths", async (t) => {
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+ 
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -406,17 +416,32 @@ test("getLocalDataPaths (with setDataFileBaseName #1699)", async (t) => {
+ 
+   t.deepEqual(paths, [
+     "./test/stubs/index.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/index.OWNERdata.mts",
++      "./test/stubs/index.OWNERdata.cts",
++      "./test/stubs/index.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/index.OWNERdata.mjs",
+     "./test/stubs/index.OWNERdata.cjs",
+     "./test/stubs/index.OWNERdata.js",
+ 
+     "./test/stubs/component/index.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/index.OWNERdata.mts",
++      "./test/stubs/component/index.OWNERdata.cts",
++      "./test/stubs/component/index.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/index.OWNERdata.mjs",
+     "./test/stubs/component/index.OWNERdata.cjs",
+     "./test/stubs/component/index.OWNERdata.js",
+ 
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -452,11 +477,21 @@ test("getLocalDataPaths (with setDataFileSuffixes override #1699)", async (t) =>
+ 
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.howdy.mts",
++      "./test/stubs/stubs.howdy.cts",
++      "./test/stubs/stubs.howdy.ts",
++    ] : []),
+     "./test/stubs/stubs.howdy.mjs",
+     "./test/stubs/stubs.howdy.cjs",
+     "./test/stubs/stubs.howdy.js",
+ 
+     "./test/stubs/component/component.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.howdy.mts",
++      "./test/stubs/component/component.howdy.cts",
++      "./test/stubs/component/component.howdy.ts",
++    ] : []),
+     "./test/stubs/component/component.howdy.mjs",
+     "./test/stubs/component/component.howdy.cjs",
+     "./test/stubs/component/component.howdy.js",
+@@ -495,12 +530,22 @@ test("getLocalDataPaths (with setDataFileSuffixes override with two entries #169
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.howdy.mts",
++      "./test/stubs/stubs.howdy.cts",
++      "./test/stubs/stubs.howdy.ts",
++    ] : []),
+     "./test/stubs/stubs.howdy.mjs",
+     "./test/stubs/stubs.howdy.cjs",
+     "./test/stubs/stubs.howdy.js",
+ 
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.howdy.mts",
++      "./test/stubs/component/component.howdy.cts",
++      "./test/stubs/component/component.howdy.ts",
++    ] : []),
+     "./test/stubs/component/component.howdy.mjs",
+     "./test/stubs/component/component.howdy.cjs",
+     "./test/stubs/component/component.howdy.js",
+@@ -522,17 +567,32 @@ test("getLocalDataPaths (with setDataFileSuffixes and setDataFileBaseName #1699)
+ 
+   t.deepEqual(paths, [
+     "./test/stubs/index.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/index.howdy.mts",
++      "./test/stubs/index.howdy.cts",
++      "./test/stubs/index.howdy.ts",
++    ] : []),
+     "./test/stubs/index.howdy.mjs",
+     "./test/stubs/index.howdy.cjs",
+     "./test/stubs/index.howdy.js",
+ 
+     "./test/stubs/component/index.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/index.howdy.mts",
++      "./test/stubs/component/index.howdy.cts",
++      "./test/stubs/component/index.howdy.ts",
++    ] : []),
+     "./test/stubs/component/index.howdy.mjs",
+     "./test/stubs/component/index.howdy.cjs",
+     "./test/stubs/component/index.howdy.js",
+ 
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.howdy.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.howdy.mts",
++      "./test/stubs/component/component.howdy.cts",
++      "./test/stubs/component/component.howdy.ts",
++    ] : []),
+     "./test/stubs/component/component.howdy.mjs",
+     "./test/stubs/component/component.howdy.cjs",
+     "./test/stubs/component/component.howdy.js",
+@@ -550,16 +610,31 @@ test("Deeper getLocalDataPaths", async (t) => {
+   t.deepEqual(paths, [
+     "./test/test.json",
+     "./test/test.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/test.OWNERdata.mts",
++      "./test/test.OWNERdata.cts",
++      "./test/test.OWNERdata.ts",
++    ] : []),
+     "./test/test.OWNERdata.mjs",
+     "./test/test.OWNERdata.cjs",
+     "./test/test.OWNERdata.js",
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -581,11 +656,21 @@ test("getLocalDataPaths with an OWNER js template", async (t) => {
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -607,11 +692,21 @@ test("getLocalDataPaths with inputDir passed in (trailing slash)", async (t) =>
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -633,11 +728,21 @@ test("getLocalDataPaths with inputDir passed in (no trailing slash)", async (t)
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+@@ -659,11 +764,21 @@ test("getLocalDataPaths with inputDir passed in (no leading slash)", async (t) =
+   t.deepEqual(paths, [
+     "./test/stubs/stubs.json",
+     "./test/stubs/stubs.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/stubs.OWNERdata.mts",
++      "./test/stubs/stubs.OWNERdata.cts",
++      "./test/stubs/stubs.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/stubs.OWNERdata.mjs",
+     "./test/stubs/stubs.OWNERdata.cjs",
+     "./test/stubs/stubs.OWNERdata.js",
+     "./test/stubs/component/component.json",
+     "./test/stubs/component/component.OWNERdata.json",
++    ...(isTypeScriptSupported() ? [
++      "./test/stubs/component/component.OWNERdata.mts",
++      "./test/stubs/component/component.OWNERdata.cts",
++      "./test/stubs/component/component.OWNERdata.ts",
++    ] : []),
+     "./test/stubs/component/component.OWNERdata.mjs",
+     "./test/stubs/component/component.OWNERdata.cjs",
+     "./test/stubs/component/component.OWNERdata.js",
+
+
+# [3 of 5 files omitted for length; code files shown first]

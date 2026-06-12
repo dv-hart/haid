@@ -1,0 +1,356 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-11",
+  "note": "Compiled from a 102-agent deep-research run (2026-06-10): 20 sources fetched, 99 claims extracted, 25 survived 3-vote adversarial verification, plus a single-pass gap-fill (model tiering, AGENTS.md ecosystem, community tools) and 3 in-house validated entries from HAID's own live why-pass runs. Human-readable cited catalog: docs/treatments.md. Entries carry last_verified dates; refresh per the protocol in that doc.",
+  "treatments": [
+    {
+      "id": "claude-md-concise",
+      "title": "A concise, hand-written CLAUDE.md (auto-loaded project memory)",
+      "symptoms": ["rereads.cross_session"],
+      "treatment": "Put bash commands, style rules, and workflow rules the agent cannot infer from code into CLAUDE.md - it is read at the start of every session. Keep it ruthlessly short (official target: under 200 lines); apply the pruning test 'Would removing this line cause Claude to make mistakes? If not, cut it.' Write it by hand from observed mistakes, not by asking the agent to generate it.",
+      "mechanism": "Auto-loaded context eliminates per-session re-derivation of project facts; brevity matters because bloated instruction files measurably reduce adherence ('the over-specified CLAUDE.md' is a named failure pattern), and CLAUDE.md is delivered as a user message, not enforced configuration.",
+      "applies_to": ["claude-code"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices (official docs)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"},
+        {"title": "Claude Code memory docs (200-line target, compliance model)", "url": "https://code.claude.com/docs/en/memory", "date": "live, fetched 2026-06-10"},
+        {"title": "ETH Zurich: LLM-generated context files hurt (~-3% success, +20% cost)", "url": "https://arxiv.org/abs/2602.11988", "date": "2026-02"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "ETH Zurich (Feb 2026) found LLM-GENERATED context files slightly hurt success and add cost, and even developer-written ones add ~19% cost for ~4% gain - so add lines only for repeatedly-observed mistakes, starting from an empty file."
+    },
+    {
+      "id": "claude-md-behavioral-contract",
+      "title": "Document the behavioral contract, not just the invocation",
+      "symptoms": ["rereads.cross_session"],
+      "treatment": "When a script/config is re-read every session, add 2-3 CLAUDE.md (or project-memory) lines stating its BEHAVIORAL CONTRACT - what it does AND doesn't do, preconditions, gotchas (e.g. 'build_and_push.sh builds+pushes only; it does NOT bump VERSION or register the task-def; the clean-tree check ignores untracked files'). Usage one-liners alone don't stop the re-reads.",
+      "mechanism": "Agents re-read files to resolve uncertainty about side effects before risky actions; stating the contract removes the uncertainty the invocation line leaves open.",
+      "applies_to": ["claude-code", "codex", "cursor", "generic"],
+      "maturity": "validated-in-house",
+      "sources": [],
+      "last_verified": "2026-06-09",
+      "caveats": "A full re-read before a production deploy is arguably cheap insurance; treat as modest optimization, not a defect. Validated on real c7-connector and boxBot sessions (HAID why-pass, 2026-06-09)."
+    },
+    {
+      "id": "skills-progressive-disclosure",
+      "title": "Agent Skills (SKILL.md) for procedures and domain knowledge",
+      "symptoms": ["rereads.cross_session", "unused_context.bloat"],
+      "treatment": "Move rarely-needed domain knowledge and repeatable multi-step procedures out of CLAUDE.md into skills. Create one 'when you keep pasting the same instructions, checklist, or multi-step procedure into chat'. Split rarely co-used content into separate bundled files.",
+      "mechanism": "Three-level progressive disclosure: only name/description metadata is preloaded; the SKILL.md body loads when judged relevant; bundled reference files load only as needed - so bundled material is 'effectively unbounded' and costs no context until accessed. Written once, re-derived never, loaded on demand.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Equipping agents for the real world with Agent Skills (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills", "date": "2025-10-16 (updated 2025-12-18)"},
+        {"title": "Claude Code skills docs", "url": "https://code.claude.com/docs/en/skills", "date": "live, fetched 2026-06-10"},
+        {"title": "anthropics/skills repo", "url": "https://github.com/anthropics/skills", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Per-skill metadata still consumes some system-prompt tokens, and the body is re-read on each activation. Skills became an open cross-tool standard (agentskills.io) in Dec 2025."
+    },
+    {
+      "id": "skill-authoring-from-failures",
+      "title": "Build skills incrementally from observed agent failures",
+      "symptoms": ["rereads.cross_session", "recurrence.fix_did_not_hold"],
+      "treatment": "Author skills from what actually went wrong, not anticipated needs: 'start with evaluation... build skills incrementally to address these shortcomings'. Have the agent itself capture successful approaches and common mistakes into the skill, including self-reflection after going off track.",
+      "mechanism": "Converts per-session re-learning and repeated mistakes into persistent, on-demand context; the failure-driven loop keeps the skill grounded in real shortcomings instead of speculative documentation.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Equipping agents for the real world with Agent Skills (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills", "date": "2025-10-16"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Backed by official guidance, not quantitative benchmarks."
+    },
+    {
+      "id": "runbook-skill-for-recurring-sequence",
+      "title": "Turn a recurring multi-step sequence into a skill/runbook",
+      "symptoms": ["rereads.cross_session", "retries.error_ignored"],
+      "treatment": "When the same multi-step operational sequence recurs across sessions (deploy: bump VERSION -> build/push -> register task-def -> run -> tail logs; or a fiddly install with underdocumented prerequisites), capture the WHOLE sequence as a skill or runbook doc, including known failure modes and their fixes.",
+      "mechanism": "Each fresh session otherwise rediscovers the sequence and its gotchas from scratch; a runbook converts per-session rediscovery into a single lookup.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "validated-in-house",
+      "sources": [],
+      "last_verified": "2026-06-09",
+      "caveats": "Validated on real boxBot sessions (signal-cli aarch64 setup recurred across 7 sessions; deploy sequence across 3)."
+    },
+    {
+      "id": "clear-discipline-two-strikes",
+      "title": "/clear between tasks; two-strikes restart after repeated corrections",
+      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic", "unused_context.bloat", "retries.error_ignored"],
+      "treatment": "Run /clear between unrelated tasks (the named anti-pattern is 'the kitchen sink session'). After correcting the agent twice on the same issue, /clear and restart with a better prompt incorporating what was learned: 'a clean session with a better prompt almost always outperforms a long session with accumulated corrections.'",
+      "mechanism": "Polluted/full context degrades performance (context rot: as context tokens grow, recall accuracy drops - the model has a finite attention budget). A restart converts accumulated corrections into a better upfront prompt.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices (official docs)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"},
+        {"title": "Context rot (Chroma research, independent corroboration)", "url": "https://research.trychroma.com/context-rot", "date": "2025"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "The two-strikes rule is framed around USER corrections; applying it to autonomous verbatim retry loops is a reasonable but interpretive extension. Sometimes context SHOULD accumulate when deep in one complex problem - don't over-prescribe."
+    },
+    {
+      "id": "subagent-isolation-for-exploration",
+      "title": "Delegate exploration/research to subagents with separate contexts",
+      "symptoms": ["unused_context.bloat", "cost.cache_dominated"],
+      "treatment": "Delegate investigation and research to subagents that read files in separate context windows and return condensed summaries (often 1,000-2,000 tokens after tens of thousands spent exploring). 'The infinite exploration' (hundreds of file reads filling context) is a named failure pattern whose documented fix is 'scope investigations narrowly or use subagents.'",
+      "mechanism": "The main conversation keeps only the distilled answer; the exploration tokens live and die in the subagent's context, protecting the primary attention budget from context rot.",
+      "applies_to": ["claude-code"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices (official docs)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"},
+        {"title": "Effective context engineering for AI agents (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents", "date": "2025-09-29"},
+        {"title": "Cognition: Don't Build Multi-Agents (counterpoint)", "url": "https://cognition.ai/blog/dont-build-multi-agents", "date": "2025-06"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "CRITICAL: subagents treat main-context CLEANLINESS, not total token SPEND - each subagent reloads system prompt/CLAUDE.md, and Anthropic's own multi-agent research reports ~15x token usage vs chat. Contested for write/code tasks (Cognition argues shared context matters there); consensus scope is read-only exploration."
+    },
+    {
+      "id": "just-in-time-retrieval",
+      "title": "Just-in-time context retrieval over pre-loading",
+      "symptoms": ["unused_context.bloat"],
+      "treatment": "Maintain lightweight identifiers (file paths, stored queries, links) and load data via tools at runtime instead of pre-loading everything; use targeted partial reads (head/tail, line ranges, search) rather than whole-file reads.",
+      "mechanism": "Context holds only what the current step needs; Claude Code itself is the worked example of the pattern.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Effective context engineering for AI agents (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents", "date": "2025-09-29"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Anthropic flags the trade-off: runtime exploration is slower, so 'the most effective agents might employ a hybrid strategy, retrieving some data up front for speed.'"
+    },
+    {
+      "id": "plan-mode-bounded",
+      "title": "Bounded plan mode: explore -> plan -> implement -> commit",
+      "symptoms": ["retouched.self_thrash", "alignment.corrections"],
+      "treatment": "For uncertain approaches, multi-file changes, or unfamiliar code, plan before coding - 'letting Claude jump straight to coding can produce code that solves the wrong problem.' BOUNDED: skip the plan for small clearly-scoped fixes ('If you could describe the diff in one sentence, skip the plan').",
+      "mechanism": "Surfacing the approach before implementation catches wrong-problem and wrong-design errors when they are cheap to fix, instead of as post-hoc rewrites.",
+      "applies_to": ["claude-code", "codex", "cursor", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices (official docs)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "A coaching tool must NOT over-prescribe planning - it adds overhead on small diffs. Mapping plan mode to self-thrash is a sound but interpretive extension of the docs' wrong-problem rationale."
+    },
+    {
+      "id": "spec-first-interview",
+      "title": "Let the agent interview you, write a spec, execute in a fresh session",
+      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic"],
+      "treatment": "For underspecified work: have the agent interview you (clarifying questions), write the answers into a SPEC.md, then execute the spec in a FRESH session with clean context.",
+      "mechanism": "Intent gets captured once, upfront, instead of leaking out through a correction stream; the fresh session executes against the spec without the negotiation residue.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices ('Let Claude interview you')", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": ""
+    },
+    {
+      "id": "spec-kit-spec-driven",
+      "title": "Spec-driven development tooling (GitHub spec-kit)",
+      "symptoms": ["retouched.self_thrash", "drift.multi_topic", "alignment.corrections"],
+      "treatment": "Use a spec-driven workflow toolkit: spec-kit's constitution -> specify -> clarify -> plan -> tasks -> validate -> implement slash-command flow forces structured specification before code generation; supports 30+ agent CLIs (Claude Code, Copilot, Gemini CLI, Cursor, Codex...).",
+      "mechanism": "Treats agents as 'literal-minded pair programmers who... need unambiguous instructions' - the structure front-loads decisions that otherwise surface as mid-implementation rework.",
+      "applies_to": ["claude-code", "codex", "copilot", "cursor", "generic"],
+      "maturity": "community-consensus",
+      "sources": [
+        {"title": "github/spec-kit (v0.10.x, ~111k stars, active)", "url": "https://github.com/github/spec-kit", "date": "release 2026-06-09, verified 2026-06-10"},
+        {"title": "GitHub blog announcement", "url": "https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/", "date": "2025-09-02"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification, not adversarially verified). Heavyweight for small fixes - same boundedness caveat as plan mode."
+    },
+    {
+      "id": "runnable-verification-stop-hooks",
+      "title": "Runnable pass/fail checks, escalated to deterministic hooks",
+      "symptoms": ["recurrence.fix_did_not_hold", "retries.error_ignored"],
+      "treatment": "Give the agent a check that produces pass/fail (test suite, build exit code, linter, fixture diff, browser screenshot vs design) so it self-iterates instead of stopping at 'looks done'. Escalation ladder: advisory CLAUDE.md instruction < deterministic hook ('unlike CLAUDE.md instructions which are advisory, hooks are deterministic'); a Stop hook can block the turn from ending until the check passes. For UI work, give end-user-style testing tools ('do all testing as a human user would') - this 'dramatically improved performance' in Anthropic's harness.",
+      "mechanism": "Without a runnable check, 'looks done' is the only signal available; a closed verification loop converts recurring defects into in-session iterations, and hooks remove reliance on the model choosing to run the check.",
+      "applies_to": ["claude-code"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code best practices (official docs)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"},
+        {"title": "Effective harnesses for long-running agents (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents", "date": "2025-11-26"},
+        {"title": "Claude Code hooks guide", "url": "https://code.claude.com/docs/en/hooks-guide", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Stop-hook blocking is overridden after 8 consecutive blocks, so not absolute. Harness results are first-party qualitative evidence without quantitative metrics."
+    },
+    {
+      "id": "persistent-progress-artifacts",
+      "title": "Persistent external artifacts for cross-session state (compaction is not enough)",
+      "symptoms": ["rereads.cross_session"],
+      "treatment": "For long-running/multi-session work, maintain a progress log file (e.g. claude-progress.txt), descriptive git commits, and an init/startup script; start each session by reading the git log and progress files instead of re-deriving project state. Anthropic explicitly finds compaction alone insufficient ('even a frontier coding model... will fall short').",
+      "mechanism": "State lives outside the context window in durable artifacts the next session can read cheaply, replacing re-derivation with lookup.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Effective harnesses for long-running agents (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents", "date": "2025-11-26"},
+        {"title": "Effective context engineering (structured note-taking / memory tool)", "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents", "date": "2025-09-29"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Findings come from an autonomous multi-context-window harness experiment, not interactive usage - frame accordingly."
+    },
+    {
+      "id": "one-feature-per-session",
+      "title": "One feature/topic per session",
+      "symptoms": ["drift.multi_topic"],
+      "treatment": "Work on only one feature at a time per session; commit progress with descriptive messages before the session ends. Converges with /clear-between-tasks and fresh-session-per-spec guidance for interactive use.",
+      "mechanism": "'Critical to addressing the agent's tendency to do too much at once' (Anthropic harness finding); single-purpose contexts avoid cross-topic interference and keep cost attribution clean.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Effective harnesses for long-running agents (Anthropic engineering)", "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents", "date": "2025-11-26"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Survived verification on a 2-1 split vote; single primary source with autonomous-harness framing. Confidence: medium."
+    },
+    {
+      "id": "worktrees-parallel-isolation",
+      "title": "Git worktrees for parallel session isolation",
+      "symptoms": ["drift.multi_topic"],
+      "treatment": "Run each concurrent task in its own git worktree (Claude Code: --worktree / -w creates an isolated checkout under .claude/worktrees/ on a new branch; the desktop app does this per session automatically). One task per tree instead of many tasks in one context.",
+      "mechanism": "Edits in one session never touch files in another, enabling clean one-topic sessions to run in parallel instead of multiplexing topics through one context.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code worktrees docs (native --worktree support since 2026-02-20)", "url": "https://code.claude.com/docs/en/worktrees", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification)."
+    },
+    {
+      "id": "scoped-review-pass-for-parsimony",
+      "title": "Scoped review passes for over-engineered output (instructions alone don't work)",
+      "symptoms": ["cleanliness.low"],
+      "treatment": "Don't rely on style instructions in CLAUDE.md/prompts to prevent bloat - run a separate review/simplification pass. SCOPE the reviewer to correctness and requirements gaps only: adversarial reviewers told to find problems will report some even when work is sound, and chasing every finding CAUSES over-engineering (extra abstraction layers, defensive code, tests for impossible cases).",
+      "mechanism": "Karpathy (Mar 2026) attests agents 'bloat abstractions... and it's a mess' AND 'do not listen to my instructions' - instruction-only style constraints are unreliable; a dedicated, scoped review pass applies the constraint where it can act, post-hoc on the artifact.",
+      "applies_to": ["claude-code", "codex", "cursor", "generic"],
+      "maturity": "community-consensus",
+      "sources": [
+        {"title": "Karpathy on X (verified via snowflake ID, 2026-03-21)", "url": "https://x.com/karpathy/status/2035173492447224237", "date": "2026-03-21"},
+        {"title": "Claude Code best practices (scoped-reviewer warning)", "url": "https://code.claude.com/docs/en/best-practices", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "The negative evidence (instructions don't stop bloat) is a single practitioner attestation, medium confidence; the scoped-reviewer warning is official. Karpathy himself offers no positive treatment ('stopped fighting it too hard')."
+    },
+    {
+      "id": "model-tiering-official",
+      "title": "Match model tier to task difficulty (official tiering)",
+      "symptoms": ["cost.model_overkill"],
+      "treatment": "Official guidance: 'Choose Haiku for simple tasks, Sonnet for most production workloads, and Opus for the most complex reasoning.' Haiku 4.5 ($1/$5 per MTok) is named for high-volume straightforward tasks AND sub-agent tasks; Sonnet 4.6 ($3/$15) for coding/agents at scale; Opus 4.8 ($5/$25) for multi-hour autonomous coding and complex systems work; Fable 5 ($10/$50) is the premium tier. Start cheap and upgrade only on demonstrated capability gaps.",
+      "mechanism": "Price ratios between tiers are 3-10x; routing easy work down a tier saves most of its cost with no quality loss when the task is genuinely below the tier's ceiling.",
+      "applies_to": ["claude-code", "generic"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Anthropic pricing", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "live, fetched 2026-06-10"},
+        {"title": "Choosing the right model", "url": "https://platform.claude.com/docs/en/about-claude/models/choosing-a-model", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). Prices change - re-verify before quoting. Anthropic also notes 'tuning effort is often a better lever than switching models' on Opus/Sonnet tiers."
+    },
+    {
+      "id": "claude-code-model-controls",
+      "title": "Claude Code's concrete cost levers: /model, opusplan, effort, subagent models",
+      "symptoms": ["cost.model_overkill"],
+      "treatment": "Use the built-in levers: /model to switch tiers mid-session; the opusplan alias (Opus for plan mode, auto-switch to Sonnet for implementation); /effort levels (low/medium for scoped, cost-sensitive work); per-subagent model frontmatter and CLAUDE_CODE_SUBAGENT_MODEL to route delegated work to Haiku - the docs explicitly say subagents help 'control costs by routing tasks to faster, cheaper models like Haiku' (the built-in Explore agent is hardwired to Haiku).",
+      "mechanism": "Planning needs the strongest reasoning; implementation against a good plan usually doesn't - hybrid modes and per-task routing capture the difference without manual juggling.",
+      "applies_to": ["claude-code"],
+      "maturity": "official",
+      "sources": [
+        {"title": "Claude Code model configuration", "url": "https://code.claude.com/docs/en/model-config", "date": "live, fetched 2026-06-10"},
+        {"title": "Claude Code subagents", "url": "https://code.claude.com/docs/en/sub-agents", "date": "live, fetched 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). Feature surface changes with releases - re-verify aliases/env vars."
+    },
+    {
+      "id": "tiered-routing-evidence",
+      "title": "Empirical tiered-routing results and failure thresholds",
+      "symptoms": ["cost.model_overkill"],
+      "treatment": "Community evidence for coaching numbers: RouteLLM (LMSYS) kept 95% of top-model quality at >85% cost reduction on some benchmarks by routing between two tiers; a 2026 practitioner guide reports 51% cost reduction from three-tier Claude routing (Haiku quick-edits/review, Sonnet implementation, Opus architecture). Failure thresholds: if a cheap-tier agent's output needs strong-tier correction >20% of the time, re-prompting cost negates the price advantage; never put the WEAK model in the planner seat ('every downstream agent operates on malformed inputs').",
+      "mechanism": "Most coding-session work (navigation, symbol resolution, quick edits) is structurally simple retrieval/pattern-matching, not deep reasoning - the expensive tier's premium buys nothing there.",
+      "applies_to": ["generic"],
+      "maturity": "emerging",
+      "sources": [
+        {"title": "RouteLLM (LMSYS)", "url": "https://www.lmsys.org/blog/2024-07-01-routellm/", "date": "2024-07-01"},
+        {"title": "Augment Code AI model routing guide", "url": "https://www.augmentcode.com/guides/ai-model-routing-guide", "date": "2026, verified 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification); vendor-blog numbers, not peer-reviewed. RouteLLM benchmarks are chat-era (2024)."
+    },
+    {
+      "id": "agents-md-cross-tool",
+      "title": "AGENTS.md - the cross-tool project-memory standard",
+      "symptoms": ["rereads.cross_session"],
+      "treatment": "For non-Claude-Code tools (or mixed-tool teams), keep persistent project guidance in AGENTS.md - the OpenAI-created (Aug 2025), Linux Foundation-governed (AAIF, Dec 2025) standard adopted by 60k+ projects and 24+ tools (Codex, Copilot coding agent + CLI, Cursor, Gemini tooling, Devin, Zed, Windsurf...). Claude Code reads CLAUDE.md, not AGENTS.md - bridge with a CLAUDE.md that contains '@AGENTS.md' (or a symlink); /init incorporates an existing AGENTS.md. Tool-specific notes: Cursor rules = .mdc files in .cursor/rules (keep <500 lines, official); aider = CONVENTIONS.md loaded via --read; Gemini = GEMINI.md (takes precedence over AGENTS.md where both exist).",
+      "mechanism": "Same auto-loaded-memory mechanism as CLAUDE.md, standardized across vendors so one file serves every agent in the toolchain.",
+      "applies_to": ["codex", "copilot", "cursor", "aider", "gemini", "claude-code"],
+      "maturity": "official",
+      "sources": [
+        {"title": "agents.md (standard site)", "url": "https://agents.md/", "date": "live, fetched 2026-06-10"},
+        {"title": "Linux Foundation AAIF announcement (60k+ adoption)", "url": "https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation", "date": "2025-12"},
+        {"title": "Claude Code memory docs (@AGENTS.md import)", "url": "https://code.claude.com/docs/en/memory", "date": "live, fetched 2026-06-10"},
+        {"title": "Copilot coding agent AGENTS.md support", "url": "https://github.blog/changelog/2025-08-28-copilot-coding-agent-now-supports-agents-md-custom-instructions/", "date": "2025-08-28"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). The keep-it-short failure mode applies across tools (ETH Zurich study; Cursor's own 500-line cap). aider native AGENTS.md auto-detection unconfirmed."
+    },
+    {
+      "id": "ccusage-cost-visibility",
+      "title": "ccusage - local token/cost visibility",
+      "symptoms": ["cost.cache_dominated", "cost.model_overkill"],
+      "treatment": "Run ccusage (CLI, reads the same local JSONL transcripts HAID does; supports 15+ agent CLIs) for daily/weekly/session token and dollar reports with cache-creation vs cache-read and per-model breakdowns. It's the diagnostic companion to tiering: see where spend concentrates before changing behavior.",
+      "mechanism": "Cost behavior changes require visibility; cache-read domination and tier mix are invisible without per-type breakdowns.",
+      "applies_to": ["claude-code", "codex", "gemini", "generic"],
+      "maturity": "community-consensus",
+      "sources": [
+        {"title": "ryoppippi/ccusage (15.9k stars, v20.0.9 2026-06-09, active)", "url": "https://github.com/ryoppippi/ccusage", "date": "verified 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). Visibility tool, not a remedy by itself - pair with model-tiering / context treatments. HAID's cost.py owns diagnosis; recommend ccusage for ongoing monitoring."
+    },
+    {
+      "id": "repomix-context-packing",
+      "title": "repomix - one-shot repo packing for context establishment",
+      "symptoms": ["rereads.cross_session"],
+      "treatment": "For 'understand this whole repo' moments (new project, external review, porting), pack the repository into one AI-friendly file with repomix (Tree-sitter compression ~70% token reduction, token counts, .gitignore-aware, secret-scanned) instead of letting the agent assemble context through dozens of exploratory reads.",
+      "mechanism": "One curated, compressed context-establishment artifact replaces ad-hoc exploratory reading; token counts make the context cost explicit upfront.",
+      "applies_to": ["generic"],
+      "maturity": "community-consensus",
+      "sources": [
+        {"title": "yamadashy/repomix (26.2k stars, v1.14.1 2026-05-27, active)", "url": "https://github.com/yamadashy/repomix", "date": "verified 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). Double-edged: packing a whole repo INTO a session is itself context bloat - use for one-shot establishment or external tools, not as a per-session habit; prefer just-in-time retrieval inside agent sessions."
+    },
+    {
+      "id": "hook-collections-guardrails",
+      "title": "Community hook collections for deterministic guardrails",
+      "symptoms": ["retries.error_ignored", "recurrence.fix_did_not_hold"],
+      "treatment": "Adopt proven hooks rather than writing from scratch: e.g. awesome-claude-code-toolkit (2k+ stars, trending Feb 2026) ships production-tested hooks - destructive-command blocker, branch guard, syntax checker, context monitor. Wire test/lint runs to PostToolUse/Stop events so failures surface deterministically.",
+      "mechanism": "Hooks always run (unlike advisory instructions), converting 'the agent should have checked' into 'the harness checked'.",
+      "applies_to": ["claude-code"],
+      "maturity": "emerging",
+      "sources": [
+        {"title": "Claude Code hooks guide (official mechanism)", "url": "https://code.claude.com/docs/en/hooks-guide", "date": "live, fetched 2026-06-10"},
+        {"title": "rohitg00/awesome-claude-code-toolkit", "url": "https://github.com/rohitg00/awesome-claude-code-toolkit", "date": "updated 2026-04-19, verified 2026-06-10"}
+      ],
+      "last_verified": "2026-06-10",
+      "caveats": "Gap-fill pass (single-pass verification). Community collections vary in quality - review before adopting. (rulebricks/claude-code-guardrails verified ABANDONED - do not recommend.)"
+    },
+    {
+      "id": "design-before-code-on-shared-subsystem",
+      "title": "Sketch the design before writing code on an under-specified subsystem",
+      "symptoms": ["retouched.self_thrash", "alignment.corrections"],
+      "treatment": "When consecutive sessions keep rewriting the same structural areas of one file/subsystem, do a short design pass first (sketch the data flow, policies, and prompt/schema shape together) and get it approved before any code is written.",
+      "mechanism": "Cross-session rework of the same areas usually means the first implementation encoded a narrow reading of an evolving requirement; surfacing the general design up front collapses two passes into one.",
+      "applies_to": ["claude-code", "codex", "cursor", "generic"],
+      "maturity": "validated-in-house",
+      "sources": [],
+      "last_verified": "2026-06-09",
+      "caveats": "Rework driven by an explicit user redirection is earned iteration, not a defect - don't prescribe process for it."
+    }
+  ]
+}

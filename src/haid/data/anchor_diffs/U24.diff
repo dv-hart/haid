@@ -1,0 +1,337 @@
+diff --git a/crates/PROJECT/src/acp/response_builder.rs b/crates/PROJECT/src/acp/response_builder.rs
+index 7a93bce5580e..d108aa117dbc 100644
+--- a/crates/PROJECT/src/acp/response_builder.rs
++++ b/crates/PROJECT/src/acp/response_builder.rs
+@@ -215,10 +215,13 @@ fn available_commands_update(working_dir: &std::path::Path) -> AvailableCommands
+ pub(super) fn send_session_setup_notifications(
+     cx: &ConnectionTo<Client>,
+     session: &Session,
++    supports_PROJECT_custom_notifications: bool,
+ ) -> Result<(), agent_client_protocol::Error> {
+     let session_id = SessionId::new(session.id.clone());
+     if let Some(updates) = build_usage_updates(session) {
+-        cx.send_notification(updates.custom)?;
++        if supports_PROJECT_custom_notifications {
++            cx.send_notification(updates.custom)?;
++        }
+         cx.send_notification(SessionNotification::new(
+             session_id.clone(),
+             SessionUpdate::UsageUpdate(updates.standard),
+diff --git a/crates/PROJECT/src/acp/server.rs b/crates/PROJECT/src/acp/server.rs
+index d6bd5f7f1d97..7cefd1e000c2 100644
+--- a/crates/PROJECT/src/acp/server.rs
++++ b/crates/PROJECT/src/acp/server.rs
+@@ -208,6 +208,7 @@ pub struct PROJECTAcpAgent {
+     client_fs_capabilities: OnceCell<FileSystemCapabilities>,
+     client_terminal: OnceCell<bool>,
+     client_mcp_host_info: OnceCell<PROJECTMcpHostInfo>,
++    client_supports_PROJECT_custom_notifications: OnceCell<bool>,
+     use_login_shell_path: OnceCell<bool>,
+     client_cx: OnceCell<ConnectionTo<Client>>,
+     config_dir: std::path::PathBuf,
+@@ -421,15 +422,17 @@ fn extract_timeout_from_meta(meta: &Option<Meta>) -> Option<u64> {
+ }
+ 
+ #[derive(Debug, Default, Deserialize)]
+-struct PROJECTClientMetaEnvelope {
++struct ClientCapabilitiesMeta {
+     #[serde(default)]
+-    PROJECT: Option<PROJECTClientMeta>,
++    PROJECT: Option<PROJECTClientCapabilities>,
+ }
+ 
+ #[derive(Debug, Default, Deserialize)]
+-struct PROJECTClientMeta {
++struct PROJECTClientCapabilities {
+     #[serde(rename = "mcpHostCapabilities", default)]
+     mcp_host_capabilities: Option<PROJECTMcpHostCapabilities>,
++    #[serde(rename = "customNotifications", default)]
++    custom_notifications: Option<bool>,
+ }
+ 
+ #[derive(Debug, Default, Deserialize)]
+@@ -438,24 +441,25 @@ struct PROJECTMcpHostCapabilities {
+     extensions: Option<rmcp::model::ExtensionCapabilities>,
+ }
+ 
+-fn extract_PROJECT_client_meta(meta: &Meta) -> Option<PROJECTClientMetaEnvelope> {
+-    serde_json::from_value(serde_json::Value::Object(meta.clone())).ok()
+-}
+-
+-fn extract_client_mcp_host_info(args: &InitializeRequest) -> PROJECTMcpHostInfo {
+-    let host_capabilities = args
+-        .client_capabilities
++fn extract_client_capabilities_meta(args: &InitializeRequest) -> Option<ClientCapabilitiesMeta> {
++    args.client_capabilities
+         .meta
+         .as_ref()
+-        .and_then(extract_PROJECT_client_meta)
+-        .and_then(|meta| meta.PROJECT)
+-        .and_then(|PROJECT| PROJECT.mcp_host_capabilities);
++        .and_then(|meta| serde_json::from_value(serde_json::Value::Object(meta.clone())).ok())
++}
++
++fn extract_client_mcp_host_info(
++    args: &InitializeRequest,
++    PROJECT_client_capabilities: Option<&PROJECTClientCapabilities>,
++) -> PROJECTMcpHostInfo {
++    let host_capabilities =
++        PROJECT_client_capabilities.and_then(|PROJECT| PROJECT.mcp_host_capabilities.as_ref());
+     let explicit_extensions = host_capabilities
+         .as_ref()
+         .and_then(|capabilities| capabilities.extensions.as_ref())
+         .is_some();
+     let extensions = host_capabilities
+-        .and_then(|capabilities| capabilities.extensions)
++        .and_then(|capabilities| capabilities.extensions.clone())
+         .unwrap_or_default();
+ 
+     PROJECTMcpHostInfo {
+@@ -1002,6 +1006,13 @@ impl PROJECTAcpAgent {
+         Arc::clone(&self.permission_manager)
+     }
+ 
++    pub(super) fn supports_PROJECT_custom_notifications(&self) -> bool {
++        self.client_supports_PROJECT_custom_notifications
++            .get()
++            .copied()
++            .unwrap_or(false)
++    }
++
+     // TODO: PROJECT reads Paths::in_state_dir globally (e.g. RequestLog), ignoring this data_dir.
+     pub async fn new(options: PROJECTAcpAgentOptions) -> Result<Self> {
+         let session_manager = Arc::new(SessionManager::new(options.data_dir));
+@@ -1032,6 +1043,7 @@ impl PROJECTAcpAgent {
+             client_fs_capabilities: OnceCell::new(),
+             client_terminal: OnceCell::new(),
+             client_mcp_host_info: OnceCell::new(),
++            client_supports_PROJECT_custom_notifications: OnceCell::new(),
+             use_login_shell_path: OnceCell::new(),
+             client_cx: OnceCell::new(),
+             config_dir: options.config_dir,
+@@ -1468,18 +1480,28 @@ impl PROJECTAcpAgent {
+                 } => {
+                     send_elicitation_interaction_update(
+                         cx,
++                        self.supports_PROJECT_custom_notifications(),
+                         session_id.0.as_ref(),
+-                        id.clone(),
+-                        InteractionState::Pending,
+-                        Some(message.clone()),
+-                        Some(requested_schema.clone()),
+-                        Some(interaction_update_meta(message_id, message_created)),
++                        InteractionUpdate {
++                            interaction: Interaction::Elicitation {
++                                id: id.clone(),
++                                state: InteractionState::Pending,
++                                message: Some(message.clone()),
++                                requested_schema: Some(requested_schema.clone()),
++                            },
++                            meta: Some(interaction_update_meta(message_id, message_created)),
++                        },
+                     )?;
+                 }
+                 ActionRequiredData::ElicitationResponse { .. } => {}
+             },
+             MessageContent::SystemNotification(notification) => {
+-                send_status_message_update(cx, session_id.0.as_ref(), notification)?;
++                send_status_message_update(
++                    cx,
++                    self.supports_PROJECT_custom_notifications(),
++                    session_id.0.as_ref(),
++                    notification,
++                )?;
+             }
+             _ => {}
+         }
+@@ -1996,6 +2018,14 @@ impl PROJECTAcpAgent {
+     }
+ }
+ 
++fn extract_client_supports_PROJECT_custom_notifications(
++    PROJECT_client_capabilities: Option<&PROJECTClientCapabilities>,
++) -> bool {
++    PROJECT_client_capabilities
++        .and_then(|PROJECT| PROJECT.custom_notifications)
++        .unwrap_or(false)
++}
++
+ fn outcome_to_confirmation(outcome: &RequestPermissionOutcome) -> PermissionConfirmation {
+     PermissionConfirmation {
+         principal_type: PrincipalType::Tool,
+@@ -2043,14 +2073,17 @@ fn credits_exhausted_prompt_error(
+ 
+ fn send_status_message_update(
+     cx: &ConnectionTo<Client>,
++    supports_PROJECT_custom_notifications: bool,
+     session_id: &str,
+     notification: &SystemNotificationContent,
+ ) -> Result<(), agent_client_protocol::Error> {
+     if let Some(status) = status_message_from_system_notification(notification) {
+-        cx.send_notification(PROJECTSessionNotification {
+-            session_id: session_id.to_string(),
+-            update: PROJECTSessionUpdate::StatusMessage(StatusMessageUpdate { status }),
+-        })?;
++        if supports_PROJECT_custom_notifications {
++            cx.send_notification(PROJECTSessionNotification {
++                session_id: session_id.to_string(),
++                update: PROJECTSessionUpdate::StatusMessage(StatusMessageUpdate { status }),
++            })?;
++        }
+     }
+     Ok(())
+ }
+@@ -2071,25 +2104,17 @@ fn status_message_from_system_notification(
+ 
+ fn send_elicitation_interaction_update(
+     cx: &ConnectionTo<Client>,
++    supports_PROJECT_custom_notifications: bool,
+     session_id: &str,
+-    id: String,
+-    state: InteractionState,
+-    message: Option<String>,
+-    requested_schema: Option<serde_json::Value>,
+-    meta: Option<serde_json::Value>,
++    update: InteractionUpdate,
+ ) -> Result<(), agent_client_protocol::Error> {
+-    cx.send_notification(PROJECTSessionNotification {
+-        session_id: session_id.to_string(),
+-        update: PROJECTSessionUpdate::InteractionUpdate(InteractionUpdate {
+-            interaction: Interaction::Elicitation {
+-                id,
+-                state,
+-                message,
+-                requested_schema,
+-            },
+-            meta,
+-        }),
+-    })
++    if supports_PROJECT_custom_notifications {
++        cx.send_notification(PROJECTSessionNotification {
++            session_id: session_id.to_string(),
++            update: PROJECTSessionUpdate::InteractionUpdate(update),
++        })?;
++    }
++    Ok(())
+ }
+ 
+ fn interaction_update_meta(message_id: Option<&str>, created: i64) -> serde_json::Value {
+@@ -2221,9 +2246,15 @@ impl PROJECTAcpAgent {
+             .client_fs_capabilities
+             .set(args.client_capabilities.fs.clone());
+         let _ = self.client_terminal.set(args.client_capabilities.terminal);
+-        let _ = self
+-            .client_mcp_host_info
+-            .set(extract_client_mcp_host_info(&args));
++        let PROJECT_client_capabilities =
++            extract_client_capabilities_meta(&args).and_then(|meta| meta.PROJECT);
++        let _ = self.client_mcp_host_info.set(extract_client_mcp_host_info(
++            &args,
++            PROJECT_client_capabilities.as_ref(),
++        ));
++        let _ = self.client_supports_PROJECT_custom_notifications.set(
++            extract_client_supports_PROJECT_custom_notifications(PROJECT_client_capabilities.as_ref()),
++        );
+         let _ = self
+             .use_login_shell_path
+             .set(extract_use_login_shell_path(&args));
+@@ -2513,7 +2544,9 @@ impl PROJECTAcpAgent {
+             .await
+             .internal_err_ctx("Failed to load session")?;
+         if let Some(updates) = build_usage_updates(&session) {
+-            cx.send_notification(updates.custom)?;
++            if self.supports_PROJECT_custom_notifications() {
++                cx.send_notification(updates.custom)?;
++            }
+             // Standard ACP notification — emitted alongside the custom one for
+             // backwards compatibility. Remove once all known clients have
+             // migrated to `_PROJECT/unstable/session/update`.
+@@ -2590,15 +2623,20 @@ impl PROJECTAcpAgent {
+ 
+         send_elicitation_interaction_update(
+             cx,
++            self.supports_PROJECT_custom_notifications(),
+             &req.session_id,
+-            req.elicitation_id,
+-            InteractionState::Submitted,
+-            None,
+-            None,
+-            Some(interaction_update_meta(
+-                response_message.id.as_deref(),
+-                response_message.created,
+-            )),
++            InteractionUpdate {
++                interaction: Interaction::Elicitation {
++                    id: req.elicitation_id,
++                    state: InteractionState::Submitted,
++                    message: None,
++                    requested_schema: None,
++                },
++                meta: Some(interaction_update_meta(
++                    response_message.id.as_deref(),
++                    response_message.created,
++                )),
++            },
+         )?;
+ 
+         Ok(EmptyResponse {})
+@@ -3722,4 +3760,39 @@ print(\"hello, world\")
+         let session = make_session_with_usage(Some(120), Some(80), Some(40), None, None, None);
+         assert!(build_usage_updates(&session).is_none());
+     }
++
++    #[test]
++    fn test_PROJECT_custom_notifications_capability_defaults_to_false() {
++        let request =
++            InitializeRequest::new(agent_client_protocol::schema::ProtocolVersion::LATEST);
++        let PROJECT_client_capabilities =
++            extract_client_capabilities_meta(&request).and_then(|meta| meta.PROJECT);
++
++        assert!(!extract_client_supports_PROJECT_custom_notifications(
++            PROJECT_client_capabilities.as_ref()
++        ));
++    }
++
++    #[test]
++    fn test_PROJECT_custom_notifications_capability_reads_client_meta() {
++        let mut PROJECT_meta = serde_json::Map::new();
++        PROJECT_meta.insert(
++            "customNotifications".to_string(),
++            serde_json::Value::Bool(true),
++        );
++        let mut meta = serde_json::Map::new();
++        meta.insert("PROJECT".to_string(), serde_json::Value::Object(PROJECT_meta));
++
++        let request =
++            InitializeRequest::new(agent_client_protocol::schema::ProtocolVersion::LATEST)
++                .client_capabilities(
++                    agent_client_protocol::schema::ClientCapabilities::new().meta(meta),
++                );
++        let PROJECT_client_capabilities =
++            extract_client_capabilities_meta(&request).and_then(|meta| meta.PROJECT);
++
++        assert!(extract_client_supports_PROJECT_custom_notifications(
++            PROJECT_client_capabilities.as_ref()
++        ));
++    }
+ }
+diff --git a/crates/PROJECT/src/acp/server/fork_session.rs b/crates/PROJECT/src/acp/server/fork_session.rs
+index c0e3c764b47a..976dd047dff8 100644
+--- a/crates/PROJECT/src/acp/server/fork_session.rs
++++ b/crates/PROJECT/src/acp/server/fork_session.rs
+@@ -66,7 +66,11 @@ impl PROJECTAcpAgent {
+         if let Some(co) = config_options {
+             response = response.config_options(co);
+         }
+-        send_session_setup_notifications(cx, &PROJECT_session)?;
++        send_session_setup_notifications(
++            cx,
++            &PROJECT_session,
++            self.supports_PROJECT_custom_notifications(),
++        )?;
+         Ok(response)
+     }
+ }
+
+
+# [12 of 15 files omitted for length; code files shown first]

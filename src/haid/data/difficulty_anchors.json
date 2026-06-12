@@ -1,0 +1,53 @@
+{
+ "axis": "difficulty",
+ "method": "dense all-pairs (72 verdicts, 100.0% consistent)",
+ "orientation": "ascending = MORE difficult (rung 0 = easiest, rung 8 = hardest)",
+ "source": "out/anchor_dense_verdicts.json",
+ "anchors": [
+  {
+   "id": "U37",
+   "rung": 0,
+   "score": -4.825228116090634
+  },
+  {
+   "id": "U39",
+   "rung": 1,
+   "score": -3.1671314822089256
+  },
+  {
+   "id": "U19",
+   "rung": 2,
+   "score": -1.9502344710452049
+  },
+  {
+   "id": "U11",
+   "rung": 3,
+   "score": -0.9303745541882098
+  },
+  {
+   "id": "U24",
+   "rung": 4,
+   "score": 1.818446067202417e-05
+  },
+  {
+   "id": "U13",
+   "rung": 5,
+   "score": 0.930409535590269
+  },
+  {
+   "id": "U10",
+   "rung": 6,
+   "score": 1.9502621270237444
+  },
+  {
+   "id": "U18",
+   "rung": 7,
+   "score": 3.1671340487841175
+  },
+  {
+   "id": "U50",
+   "rung": 8,
+   "score": 4.8251447276741715
+  }
+ ]
+}

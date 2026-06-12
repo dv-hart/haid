@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "haid"
+version = "0.0.1"
+description = "How Am I Doing — local-only self-audit & coaching for Claude Code sessions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []  # stdlib only — model judgment is delegated to the host agent (see scoring/compare.py)
+
+[project.scripts]
+haid = "haid.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+haid = ["data/*.json", "data/anchor_diffs/*.diff"]

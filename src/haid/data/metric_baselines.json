@@ -1,0 +1,184 @@
+{
+  "rereads": {
+    "session": {
+      "rates": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.003018,
+        0.008824,
+        0.014203,
+        0.016655,
+        0.016977,
+        0.024723,
+        0.028046,
+        0.030692,
+        0.038524,
+        0.063309,
+        0.065038,
+        0.152791
+      ],
+      "n": 27,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [session scope]"
+    },
+    "window": {
+      "rates": [
+        0.0,
+        0.016977,
+        0.024723,
+        0.126506,
+        0.146764,
+        0.152791
+      ],
+      "n": 6,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [window scope]"
+    }
+  },
+  "retries": {
+    "session": {
+      "rates": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.001345
+      ],
+      "n": 27,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [session scope]"
+    },
+    "window": {
+      "rates": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.000272
+      ],
+      "n": 6,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [window scope]"
+    }
+  },
+  "retouched": {
+    "session": {
+      "rates": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.006527,
+        0.007506,
+        0.008384,
+        0.02343,
+        0.025289,
+        0.027656,
+        0.034653,
+        0.04496,
+        0.053098,
+        0.059234,
+        0.066707,
+        0.070506,
+        0.091378,
+        0.113312,
+        0.139694,
+        0.166953,
+        0.182332
+      ],
+      "n": 23,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [session scope]"
+    },
+    "window": {
+      "rates": [
+        0.007506,
+        0.025408,
+        0.084999,
+        0.162611
+      ],
+      "n": 4,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [window scope]"
+    }
+  },
+  "unused_context": {
+    "session": {
+      "rates": [
+        0.0,
+        0.0,
+        0.071764,
+        0.111154,
+        0.180807,
+        0.186907,
+        0.204495,
+        0.24732,
+        0.285158,
+        0.31604,
+        0.326681,
+        0.36869,
+        0.370392,
+        0.409975,
+        0.519685,
+        0.626349,
+        0.64447,
+        0.698097,
+        0.758585,
+        0.83437,
+        0.878641,
+        0.960158,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n": 27,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [session scope]"
+    },
+    "window": {
+      "rates": [
+        0.016418,
+        0.194452,
+        0.498165,
+        0.519685,
+        1.0,
+        1.0
+      ],
+      "n": 6,
+      "source": "bootstrap: 6 windows (7-day buckets), 28 sessions, single author \u2014 placeholder until community benchmark (ADR-0005) [window scope]"
+    }
+  }
+}
