@@ -9,7 +9,25 @@ description = "How Am I Doing — local-only self-audit & coaching for Claude Co
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [{ name = "dv-hart", email = "jhart@datavine.us" }]
+keywords = ["claude-code", "self-audit", "coaching", "llm", "agent", "telemetry"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = []  # stdlib only — model judgment is delegated to the host agent (see scoring/compare.py)
+
+[project.urls]
+Homepage = "https://github.com/dv-hart/haid"
+Repository = "https://github.com/dv-hart/haid"
+Issues = "https://github.com/dv-hart/haid/issues"
 
 [project.scripts]
 haid = "haid.cli:main"
