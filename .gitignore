@@ -1,0 +1,43 @@
+# HAID — never commit anyone's session data or analysis output
+# (the whole point is that nothing leaves the user's machine)
+*.jsonl
+tests/fixtures/**/*.jsonl
+!tests/fixtures/**/*.anon.jsonl   # only explicitly-anonymized fixtures
+*.sqlite
+*.sqlite3
+*.db
+
+# Raw extracted transcript dumps — contain real (possibly secret) content
+research/_*.json
+/out/
+/reports/
+*.report.md
+*.report.json
+
+# Python (per ADR-0001 recommendation; adjust if stack changes)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Node (if ADR-0001 is reversed to TypeScript)
+node_modules/
+*.tsbuildinfo
+
+# Scratch / debug output
+err.txt
+err_chrome.txt
+out_dom.html
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,403 @@
+diff --git a/app/src/components/channels/mcp/InstalledServerDetail.enabledToggle.test.tsx b/app/src/components/channels/mcp/InstalledServerDetail.enabledToggle.test.tsx
+new file mode 100644
+index 0000000000..45e465f963
+--- /dev/null
++++ b/app/src/components/channels/mcp/InstalledServerDetail.enabledToggle.test.tsx
+@@ -0,0 +1,108 @@
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++
++import InstalledServerDetail from './InstalledServerDetail';
++
++const mockConnect = vi.fn();
++const mockDisconnect = vi.fn();
++const mockUninstall = vi.fn();
++const mockUpdateEnv = vi.fn();
++const mockSetEnabled = vi.fn();
++
++vi.mock('../../../services/api/mcpClientsApi', () => ({
++  mcpClientsApi: {
++    connect: (...args: unknown[]) => mockConnect(...args),
++    disconnect: (...args: unknown[]) => mockDisconnect(...args),
++    uninstall: (...args: unknown[]) => mockUninstall(...args),
++    updateEnv: (...args: unknown[]) => mockUpdateEnv(...args),
++    setEnabled: (...args: unknown[]) => mockSetEnabled(...args),
++    configAssist: vi.fn(),
++  },
++}));
++
++const BASE_SERVER_ENABLED = {
++  server_id: 'srv-1',
++  qualified_name: 'acme/test-server',
++  display_name: 'Test Server',
++  description: 'A test MCP server',
++  command_kind: 'node' as const,
++  command: 'node',
++  args: [],
++  env_keys: [] as string[],
++  installed_at: 1_700_000_000,
++  enabled: true,
++};
++
++const BASE_SERVER_DISABLED = { ...BASE_SERVER_ENABLED, enabled: false };
++
++describe('InstalledServerDetail — enable/disable toggle', () => {
++  beforeEach(() => {
++    mockConnect.mockReset();
++    mockDisconnect.mockReset();
++    mockUninstall.mockReset();
++    mockUpdateEnv.mockReset();
++    mockSetEnabled.mockReset();
++  });
++
++  it('shows Disable button when server is enabled', () => {
++    render(
++      <InstalledServerDetail
++        server={BASE_SERVER_ENABLED}
++        connStatus={undefined}
++        onUninstalled={() => {}}
++      />
++    );
++    expect(screen.getByRole('button', { name: /disable/i })).toBeInTheDocument();
++  });
++
++  it('shows Enable button when server is disabled and hides Connect button', () => {
++    render(
++      <InstalledServerDetail
++        server={BASE_SERVER_DISABLED}
++        connStatus={undefined}
++        onUninstalled={() => {}}
++      />
++    );
++    expect(screen.getByRole('button', { name: /^enable$/i })).toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument();
++  });
++
++  it('calls setEnabled(false) on Disable click and notifies parent via onEnabledChange', async () => {
++    mockSetEnabled.mockResolvedValue({ server_id: 'srv-1', enabled: false });
++    const onEnabledChange = vi.fn();
++    render(
++      <InstalledServerDetail
++        server={BASE_SERVER_ENABLED}
++        connStatus={undefined}
++        onUninstalled={() => {}}
++        onEnabledChange={onEnabledChange}
++      />
++    );
++
++    await act(async () => {
++      fireEvent.click(screen.getByRole('button', { name: /disable/i }));
++    });
++
++    await waitFor(() => {
++      expect(mockSetEnabled).toHaveBeenCalledWith('srv-1', false);
++      expect(onEnabledChange).toHaveBeenCalledWith('srv-1', false);
++    });
++  });
++
++  it('surfaces API error inline if setEnabled rejects', async () => {
++    mockSetEnabled.mockRejectedValue(new Error('Server unavailable'));
++    render(
++      <InstalledServerDetail
++        server={BASE_SERVER_ENABLED}
++        connStatus={undefined}
++        onUninstalled={() => {}}
++      />
++    );
++
++    await act(async () => {
++      fireEvent.click(screen.getByRole('button', { name: /disable/i }));
++    });
++
++    await waitFor(() => expect(screen.getByText('Server unavailable')).toBeInTheDocument());
++  });
++});
+diff --git a/app/src/components/channels/mcp/InstalledServerDetail.test.tsx b/app/src/components/channels/mcp/InstalledServerDetail.test.tsx
+index b08be7dce3..0b58baf57f 100644
+--- a/app/src/components/channels/mcp/InstalledServerDetail.test.tsx
++++ b/app/src/components/channels/mcp/InstalledServerDetail.test.tsx
+@@ -28,6 +28,7 @@ const BASE_SERVER = {
+   args: [],
+   env_keys: ['API_KEY', 'DB_URL'],
+   installed_at: 1_700_000_000,
++  enabled: true,
+ };
+ 
+ describe('InstalledServerDetail', () => {
+@@ -71,6 +72,25 @@ describe('InstalledServerDetail', () => {
+     expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
+   });
+ 
++  it('shows Connecting… label and disables the Connect button while status=connecting', () => {
++    render(
++      <InstalledServerDetail
++        server={BASE_SERVER}
++        connStatus={{
++          server_id: 'srv-1',
++          qualified_name: 'acme/test-server',
++          display_name: 'Test Server',
++          status: 'connecting',
++          tool_count: 0,
++        }}
++        onUninstalled={() => {}}
++      />
++    );
++    const btn = screen.getByRole('button', { name: /^connecting/i });
++    expect(btn).toBeInTheDocument();
++    expect(btn).toBeDisabled();
++  });
++
+   it('shows Disconnect button when connected', () => {
+     render(
+       <InstalledServerDetail
+diff --git a/app/src/components/channels/mcp/InstalledServerDetail.tsx b/app/src/components/channels/mcp/InstalledServerDetail.tsx
+index 4d304e23bc..5eec72a157 100644
+--- a/app/src/components/channels/mcp/InstalledServerDetail.tsx
++++ b/app/src/components/channels/mcp/InstalledServerDetail.tsx
+@@ -19,12 +19,14 @@ interface InstalledServerDetailProps {
+   server: InstalledServer;
+   connStatus: ConnStatus | undefined;
+   onUninstalled: (serverId: string) => void;
++  onEnabledChange?: (serverId: string, enabled: boolean) => void;
+ }
+ 
+ const InstalledServerDetail = ({
+   server,
+   connStatus,
+   onUninstalled,
++  onEnabledChange,
+ }: InstalledServerDetailProps) => {
+   const { t } = useT();
+   const status: ServerStatus = connStatus?.status ?? 'disconnected';
+@@ -115,6 +117,25 @@ const InstalledServerDetail = ({
+     });
+   }, [server.server_id, runBusy, onUninstalled]);
+ 
++  const handleSetEnabled = useCallback(
++    (next: boolean) => {
++      void runBusy(async () => {
++        log('set_enabled server_id=%s enabled=%s', server.server_id, next);
++        await mcpClientsApi.setEnabled(server.server_id, next);
++        if (!next) {
++          // Disabling the server: drop stale tool list so no tool rows
++          // remain in view while the server is disabled, and clear any
++          // open playground session.
++          setTools([]);
++          setPlaygroundTool(null);
++        }
++        log('set_enabled done server_id=%s enabled=%s', server.server_id, next);
++        onEnabledChange?.(server.server_id, next);
++      });
++    },
++    [server.server_id, runBusy, onEnabledChange]
++  );
++
+   const openReconfigure = useCallback(
+     (prefill?: Record<string, string>) => {
+       const initial: Record<string, string> = {};
+@@ -217,23 +238,35 @@ const InstalledServerDetail = ({
+ 
+       {/* Action buttons */}
+       <div className="flex flex-wrap gap-2">
+-        {status !== 'connected' ? (
+-          <button
+-            type="button"
+-            disabled={busy || status === 'connecting'}
+-            onClick={handleConnect}
+-            className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
+-            {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
+-          </button>
+-        ) : (
+-          <button
+-            type="button"
+-            disabled={busy}
+-            onClick={handleDisconnect}
+-            className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+-            {t('mcp.detail.disconnect')}
+-          </button>
+-        )}
++        {/* Connect / Disconnect — hidden when the server is disabled because the
++            core refuses connect calls on disabled servers. */}
++        {server.enabled &&
++          (status !== 'connected' ? (
++            <button
++              type="button"
++              disabled={busy || status === 'connecting'}
++              onClick={handleConnect}
++              className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
++              {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
++            </button>
++          ) : (
++            <button
++              type="button"
++              disabled={busy}
++              onClick={handleDisconnect}
++              className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
++              {t('mcp.detail.disconnect')}
++            </button>
++          ))}
++
++        {/* Enable / Disable toggle */}
++        <button
++          type="button"
++          disabled={busy}
++          onClick={() => handleSetEnabled(!server.enabled)}
++          className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
++          {server.enabled ? t('mcp.detail.disable') : t('mcp.detail.enable')}
++        </button>
+ 
+         <button
+           type="button"
+diff --git a/app/src/components/channels/mcp/InstalledServerList.test.tsx b/app/src/components/channels/mcp/InstalledServerList.test.tsx
+index 5180bd70ab..f81d9e0e22 100644
+--- a/app/src/components/channels/mcp/InstalledServerList.test.tsx
++++ b/app/src/components/channels/mcp/InstalledServerList.test.tsx
+@@ -18,6 +18,7 @@ const SERVER_1: InstalledServer = {
+   args: ['-y', 'acme/fs-server'],
+   env_keys: [],
+   installed_at: 1_700_000_000,
++  enabled: true,
+ };
+ 
+ const SERVER_2: InstalledServer = {
+@@ -30,6 +31,7 @@ const SERVER_2: InstalledServer = {
+   args: ['-y', 'acme/db-server'],
+   env_keys: ['DB_URL'],
+   installed_at: 1_700_000_001,
++  enabled: true,
+ };
+ 
+ const STATUS_CONNECTED: ConnStatus = {
+diff --git a/app/src/components/channels/mcp/InstalledServerList.tsx b/app/src/components/channels/mcp/InstalledServerList.tsx
+index ed6aca55c0..2f0a92d93e 100644
+--- a/app/src/components/channels/mcp/InstalledServerList.tsx
++++ b/app/src/components/channels/mcp/InstalledServerList.tsx
+@@ -29,6 +29,7 @@ const STATUS_DOT: Record<ServerStatus, string> = {
+   connecting: 'bg-amber-400',
+   disconnected: 'bg-stone-300 dark:bg-neutral-600',
+   error: 'bg-coral-500',
++  disabled: 'bg-stone-200 dark:bg-neutral-700',
+ };
+ 
+ // i18n keys for the per-status tooltip on the status dot. Reuses the
+@@ -40,6 +41,7 @@ const STATUS_I18N_KEYS: Record<ServerStatus, string> = {
+   connecting: 'channels.status.connecting',
+   disconnected: 'channels.status.disconnected',
+   error: 'channels.status.error',
++  disabled: 'mcp.status.disabled',
+ };
+ 
+ const InstalledServerList = ({
+diff --git a/app/src/components/channels/mcp/McpInventoryManifest.test.ts b/app/src/components/channels/mcp/McpInventoryManifest.test.ts
+index 4b6ba5f2f6..334d79d67b 100644
+--- a/app/src/components/channels/mcp/McpInventoryManifest.test.ts
++++ b/app/src/components/channels/mcp/McpInventoryManifest.test.ts
+@@ -34,6 +34,7 @@ const SERVER_FS: InstalledServer = {
+   config: { region: 'us-east-1' },
+   installed_at: 1_700_000_000,
+   last_connected_at: 1_700_001_000,
++  enabled: true,
+ };
+ 
+ const SERVER_DB: InstalledServer = {
+@@ -46,6 +47,7 @@ const SERVER_DB: InstalledServer = {
+   args: ['-y', 'acme/db-server'],
+   env_keys: ['DB_URL'],
+   installed_at: 1_700_000_500,
++  enabled: true,
+ };
+ 
+ describe('McpInventoryManifest: buildManifest', () => {
+diff --git a/app/src/components/channels/mcp/McpInventoryPanel.test.tsx b/app/src/components/channels/mcp/McpInventoryPanel.test.tsx
+index ad69408019..d46f033b5c 100644
+--- a/app/src/components/channels/mcp/McpInventoryPanel.test.tsx
++++ b/app/src/components/channels/mcp/McpInventoryPanel.test.tsx
+@@ -22,6 +22,7 @@ const SERVER_FS: InstalledServer = {
+   args: ['-y', 'acme/fs-server'],
+   env_keys: ['ROOT_DIR'],
+   installed_at: 1_700_000_000,
++  enabled: true,
+ };
+ 
+ const SERVER_DB: InstalledServer = {
+@@ -33,6 +34,7 @@ const SERVER_DB: InstalledServer = {
+   args: ['-y', 'acme/db-server'],
+   env_keys: ['DB_URL'],
+   installed_at: 1_700_000_500,
++  enabled: true,
+ };
+ 
+ const renderPanel = (overrides?: {
+diff --git a/app/src/components/channels/mcp/McpServersTab.test.tsx b/app/src/components/channels/mcp/McpServersTab.test.tsx
+index e5567afdfa..98577ebc1c 100644
+--- a/app/src/components/channels/mcp/McpServersTab.test.tsx
++++ b/app/src/components/channels/mcp/McpServersTab.test.tsx
+@@ -14,6 +14,7 @@ const mockInstall = vi.fn();
+ const mockConnect = vi.fn();
+ const mockDisconnect = vi.fn();
+ const mockUninstall = vi.fn();
++const mockSetEnabled = vi.fn();
+ const mockRegistryGet = vi.fn();
+ const mockRegistrySearch = vi.fn();
+ const mockConfigAssist = vi.fn();
+@@ -26,6 +27,7 @@ vi.mock('../../../services/api/mcpClientsApi', () => ({
+     connect: (...args: unknown[]) => mockConnect(...args),
+     disconnect: (...args: unknown[]) => mockDisconnect(...args),
+     uninstall: (...args: unknown[]) => mockUninstall(...args),
++    setEnabled: (...args: unknown[]) => mockSetEnabled(...args),
+     registryGet: (...args: unknown[]) => mockRegistryGet(...args),
+     registrySearch: (...args: unknown[]) => mockRegistrySearch(...args),
+     configAssist: (...args: unknown[]) => mockConfigAssist(...args),
+@@ -43,6 +45,7 @@ const SERVERS = [
+     args: ['-y', 'acme/fs-server'],
+     env_keys: [],
+     installed_at: 1_700_000_000,
++    enabled: true,
+   },
+ ];
+ 
+@@ -86,6 +89,7 @@ describe('McpServersTab', () => {
+     mockConnect.mockResolvedValue({ server_id: '', status: 'connected', tools: [] });
+     mockDisconnect.mockReset();
+     mockUninstall.mockReset();
++    mockSetEnabled.mockReset();
+     mockRegistryGet.mockReset();
+     mockRegistrySearch.mockReset();
+   });
+@@ -149,6 +153,33 @@ describe('McpServersTab', () => {
+     expect(screen.getByText('Select a server or browse the catalog.')).toBeInTheDocument();
+   });
+ 
++  it('refreshes installed list + status after a server is disabled from the detail pane', async () => {
++    mockInstalledList.mockResolvedValue(SERVERS);
++    mockStatus.mockResolvedValue(STATUSES_DISCONNECTED);
++    mockSetEnabled.mockResolvedValue({ server_id: 'srv-1', enabled: false });
++
++    render(<McpServersTab />);
++    vi.useRealTimers();
++
++    await waitFor(() => screen.getByText('File Server'));
++    fireEvent.click(screen.getAllByRole('button', { name: /File Server/i })[0]);
++    await waitFor(() => screen.getByText('acme/fs-server'));
++
++    const installedCallsBefore = mockInstalledList.mock.calls.length;
++    const statusCallsBefore = mockStatus.mock.calls.length;
++
++    const disableBtn = await screen.findByRole('button', { name: /^disable$/i });
++    fireEvent.click(disableBtn);
++
++    // After the toggle, handleEnabledChange must re-call both loadInstalled
++    // and fetchStatuses so the parent reflects the new enabled state.
++    await waitFor(() => {
++      expect(mockSetEnabled).toHaveBeenCalledWith('srv-1', false);
++      expect(mockInstalledList.mock.calls.length).toBeGreaterThan(installedCallsBefore);
++      expect(mockStatus.mock.calls.length).toBeGreaterThan(statusCallsBefore);
++    });
++  });
++
+   it('opens detail pane when a server is clicked', async () => {
+     mockInstalledList.mockResolvedValue(SERVERS);
+     mockStatus.mockResolvedValue(STATUSES_DISCONNECTED);
+
+
+# [33 of 41 files omitted for length; code files shown first]

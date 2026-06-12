@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HAID visualizer — prototype samples</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --ink:#c9d1d9; --dim:#8b949e; --line:#30363d; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .page { max-width:820px; margin:0 auto; padding:48px 28px; }
+  h1 { font-size:22px; margin:0 0 6px; } .sub { color:var(--dim); margin:0 0 32px; max-width:640px; line-height:1.6; }
+  a.card { display:block; text-decoration:none; color:inherit; background:var(--panel);
+           border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin-bottom:14px; transition:.12s; }
+  a.card:hover { border-color:var(--accent); transform:translateY(-1px); }
+  a.card h2 { margin:0 0 4px; font-size:15px; color:var(--accent); }
+  a.card p { margin:0; color:var(--dim); font-size:13px; line-height:1.5; }
+  a.card .tag { font-size:11px; color:var(--dim); font-family:ui-monospace,Consolas,monospace; }
+  .foot { color:var(--dim); font-size:12px; margin-top:28px; line-height:1.6; border-top:1px solid var(--line); padding-top:16px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>HAID visualizer — prototype samples</h1>
+  <p class="sub">Three throwaway wireframes to refine the visualizer <i>before</i> we build it for real.
+     All driven by <b>real data</b> from HAID's own sessions (last 60 days). Self-contained — they open in
+     Chrome with no build step, the delivery model proposed for <span style="font-family:monospace">haid report</span>.</p>
+
+  <a class="card" href="overview.html">
+    <h2>1 · Window overview →</h2>
+    <p>The zoom-out level: "how am I doing?" — waste placed vs baseline, work grouped into episodes.
+       The navigation root (window › episode › session › diagram).</p>
+    <span class="tag">real metric headline · 16 sessions</span>
+  </a>
+
+  <a class="card" href="bus.html">
+    <h2>2 · The bus diagram (flagship) →</h2>
+    <p>The leaf view: time-layered spine, file buses in the gutters (left=reads, right=writes),
+       width=token volume, right margin=cumulative cost. 3 themes, waste overlays toggle.</p>
+    <span class="tag">real session spine · 96–287 tool-calls</span>
+  </a>
+
+  <a class="card" href="components.html">
+    <h2>3 · Visual vocabulary →</h2>
+    <p>Every channel in isolation — width tiers, file palette, edge glyphs, overlay badges, cost margin,
+       the deferred token-type ribbon. Each panel ends with the open decision it teases out.</p>
+    <span class="tag">design system · 8 panels</span>
+  </a>
+
+  <div class="foot">
+    Format proposal: a single self-contained HTML artifact written by <span style="font-family:monospace">haid report</span>,
+    opened in any browser — no server, no node_modules, matches the pip-install-and-go UX. Layout is hand-rolled SVG here
+    (step-based Y, fixed lanes); ELK is the candidate if we need real crossing-minimization at scale.
+  </div>
+</div>
+</body>
+</html>
