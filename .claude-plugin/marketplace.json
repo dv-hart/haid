@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "haid",
+  "owner": { "name": "dv-hart", "email": "jhart@datavine.us" },
+  "description": "HAID — local-only self-audit & coaching for Claude Code sessions.",
+  "plugins": [
+    {
+      "name": "haid",
+      "source": "./",
+      "description": "Run HAID's self-audit pipeline over your recent Claude Code sessions and present the coaching report (metrics → tag → episodes → score → why → report). A SessionStart hook ensures the haid CLI is installed.",
+      "version": "0.0.1",
+      "license": "MIT",
+      "keywords": ["claude-code", "self-audit", "coaching", "telemetry"]
+    }
+  ]
+}
