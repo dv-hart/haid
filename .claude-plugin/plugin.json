@@ -8,6 +8,5 @@
   "repository": "https://github.com/dv-hart/haid",
   "license": "MIT",
   "keywords": ["claude-code", "self-audit", "coaching", "telemetry", "llm", "agent"],
-  "skills": "./.claude/skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./.claude/skills/"
 }
