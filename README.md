@@ -39,6 +39,66 @@ metrics.
 > score. Next: the diagnosis router, episode segmentation (Phase 2), and the visualization
 > (Phase 1.5). See [plans/roadmap.md](plans/roadmap.md) and [plans/phase1-build.md](plans/phase1-build.md).
 
+## Installation
+
+HAID is on PyPI (stdlib-only, no dependencies, Python ≥ 3.10):
+
+```bash
+pip install haid
+```
+
+On Ubuntu/WSL without a venv set up, a user install works fine:
+
+```bash
+python3 -m pip install --user haid
+# CLI lands at ~/.local/bin/haid — make sure that's on your PATH
+```
+
+Verify it works:
+
+```bash
+haid --help
+haid metrics --project ~/path/to/some/project --days 30
+```
+
+`haid metrics` is fully deterministic (no model calls) and runs against the
+Claude Code transcripts already on your machine — it's the quickest smoke test.
+
+**Where to install:** HAID reads transcripts from `~/.claude/projects/` on the
+machine where the sessions ran. If you use Claude Code inside WSL, install HAID
+inside WSL too. (A Windows-side install can still reach WSL transcripts via UNC
+`--session` paths like `//wsl.localhost/Ubuntu/home/<user>/.claude/projects/<slug>/*.jsonl`,
+but `--project` discovery won't cross the boundary.)
+
+## Activating in Claude Code
+
+The `haid` CLI never calls a model itself. The full coaching pipeline
+(tag → episodes → score → why → report) is driven *by Claude Code* through the
+[`haid-report` skill](.claude/skills/haid-report/SKILL.md): the CLI writes job
+manifests at each model boundary, and the skill tells Claude how to fulfill
+them with subagents and resume.
+
+1. Install the CLI (above) so `haid` is on the PATH of the machine/shell where
+   Claude Code runs.
+2. Copy the skill from this repo into Claude Code's skills directory:
+
+   ```bash
+   # available in every project:
+   mkdir -p ~/.claude/skills/haid-report
+   cp .claude/skills/haid-report/SKILL.md ~/.claude/skills/haid-report/
+
+   # …or for a single project only:
+   mkdir -p <project>/.claude/skills/haid-report
+   cp .claude/skills/haid-report/SKILL.md <project>/.claude/skills/haid-report/
+   ```
+
+   (If you're working inside this repo, the skill is already active — it's a
+   project skill here.)
+3. Start a new Claude Code session and ask **"how am I doing?"**, or invoke
+   `/haid-report` directly. Claude will run the chain and present the coaching
+   report. For a zero-cost, fully deterministic answer, ask for the
+   `--digest-only` report or just the waste metrics.
+
 ## What this is not
 
 Not another token counter. Raw usage accounting is already well covered
