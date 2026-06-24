@@ -25,12 +25,20 @@ structured-output schema for each job. You never need taxonomy, ladder, or scori
 knowledge; you only spawn agents on the prompts given and write back their answers in
 the documented shape.
 
+**This is mechanical, not creative.** The manifest `prompt` is the agent's *entire*
+prompt — pass it **verbatim**, byte-for-byte. You author nothing, paraphrase nothing,
+add no preamble or framing, and never deliberate over wording. The pairwise judging
+prompts are calibrated text (the exact phrasing and the hidden A/B counterbalancing in
+`compare.py` are load-bearing); rewriting them silently invalidates the scoring. If you
+ever catch yourself composing a subagent prompt, or weighing "which phrasing is better,"
+stop — that's a bug. Read `prompt`, attach `schema`, spawn, collect. Nothing else.
+
 ```
-haid metrics ─┐  (no model)
-haid tag ─────┤  haiku × ~1/user-message     labels
-haid episodes ┤  haiku × 1 (optional)        grouping      ──►  haid report ──► opus × 1 ──► final report
-haid score ───┤  haiku × ~9-11/episode/axis  verdicts                │
-haid why ─────┘  sonnet × top anchors        notes                   └─► haid benchmark (opt-in only)
+haid metrics ─┐  (no model)                                ┌─► haid report ──► opus × 1 ──► final report
+haid tag ─────┤  haiku × ~1/user-message     labels        │
+haid episodes ┤  haiku × 1 (optional)        grouping   ───┼─► haid viz  (no model) ──► out/report/haid-viz.html
+haid score ───┤  haiku × ~9-11/episode/axis  verdicts      │
+haid why ─────┘  sonnet × top anchors        notes         └─► haid benchmark (opt-in only)
 ```
 
 ## The universal loop
@@ -40,7 +48,8 @@ Every model boundary follows the same cycle. Learn it once:
 1. Run the `haid` command. **Exit 0** → done, output is final. **Exit 3** → pending: the
    command printed the manifest path(s) and the exact answers-file path + shape it wants.
 2. Read the manifest. Fan out subagents over its job prompts (parallel — jobs are
-   independent).
+   independent), passing each `prompt` verbatim with its `schema`. **Most boundaries are
+   tool-free** (see "Two kinds of boundary" below) — give those agents no file tools.
 3. Write the answers file beside the manifest, in the shape the command printed.
 4. Re-run the **same command verbatim**. It reads the answers back (strictly validated
    where it matters) and either completes or raises the next pending boundary.
@@ -135,7 +144,8 @@ Exit 3 writes one manifest **per episode per axis**:
 pairwise prompt each), a `schema` for the verdict, and a `fingerprint`.
 
 For each manifest, spawn one **haiku** judge per `comparisons[i].prompt`, constrained to
-`schema`; collect each judge's `winner` (`"A"`, `"B"`, or `"tie"`). Write
+`schema` and given **no tools** (the diffs are inlined — a judge that reads files is
+misconfigured); collect each judge's `winner` (`"A"`, `"B"`, or `"tie"`). Write
 `out/jobs/<episode>_<axis>.verdicts.json`:
 `{"fingerprint": <copied from the manifest>, "winners": ["A", "B", "tie", ...]}` —
 **in comparison order**, one winner per comparison, nothing else.
@@ -193,11 +203,41 @@ the deterministic layer didn't produce. If it rejects, show the composer the val
 error and the digest's actual finding/treatment ids and have it re-emit — never edit the
 composition to slip past the validator.
 
-**Present the final rendered report to the user verbatim** (it's the product: credits
-first, ≤5 evidence-cited recommendations, watchlist, hedges). Don't re-rank, soften, or
-add remedies of your own — the hedges and caveats are load-bearing trust discipline.
-Cheap path: `--digest-only` skips the model entirely; offer it when the user wants a
-zero-cost or fully-deterministic answer.
+**Present the final rendered report to the user verbatim** (it's the product: window
+score, credits first, ≤5 evidence-cited recommendations, watchlist, hedges). Don't
+re-rank, soften, or add remedies of your own — the hedges and caveats are load-bearing
+trust discipline. Cheap path: `--digest-only` skips the model entirely; offer it when the
+user wants a zero-cost or fully-deterministic answer.
+
+**Close every report by pointing the user to the four things they'll want next** (the
+render already includes a "Scoreboard" block and a "Where to look" footer — reinforce them
+in your wrap-up, don't bury them):
+1. **The report** — saved under `out/report/` (the rendered narrative + the JSON inputs).
+2. **The window score** — the single `value` figure (Σ achievement / Σ normalized tokens
+   across scored episodes) plus the difficulty ceiling, shown in the Scoreboard. This is
+   the number to track run-over-run.
+3. **The visualization** — generate it from the live window with `haid viz` (step 6b) and
+   point the user at the self-contained `out/report/haid-viz.html` (opens in any browser,
+   no server). It reflects THIS run: real episode grouping + per-episode score badges.
+4. **The leaderboard** — submitting is **opt-in and explicit** (step 7). Mention it exists
+   and that the window score is what it ranks; never submit or imply submission is
+   expected. The report already shows where the user lands (the "Community benchmark"
+   block); the opt-in `haid submit` opens the PR.
+
+### 6b. Visualize — render the window (deterministic, no model)
+
+```
+haid viz --project P --days N --scores out/report/scores.json
+         --metrics out/report/metrics.json --out out/report/haid-viz.html
+```
+
+A self-contained HTML (CSS+JS+data inlined) opening from `file://`. **Episodes come from
+the real pipeline, best-available first**: `--scores` (normal case → real grouping, titles,
+and per-episode achievement/rung badges) > `--grouping` (grouping without scores) > a single
+flat "window" episode if neither is given (the command warns and tells you to pass
+`--scores`). `--metrics` adds the per-file flag overlay. No model, never pends. Sessions
+with no active-timeline spine are skipped with a stderr note. Run it after `haid score`
+(it reads that JSON); point the user at the output path in your wrap-up (item 3 above).
 
 ### 7. Community benchmark — view, then (opt-in) submit
 
@@ -228,8 +268,28 @@ haid submit --scores out/report/scores.json --github-user USER --project NAME [-
   plausibility, author == username) and auto-merge. `haid benchmark` still emits the raw
   payload alone if that's all the user wants.
 
+## Two kinds of boundary (tool-free vs tool-using)
+
+Get this right or runs come back inconsistent and over-budget:
+
+- **Tool-FREE judgment** — `tag`, `episodes`, `score`, `compose`. The prompt already
+  carries everything the agent needs (diffs, message text, the whole digest are inlined).
+  The agent's only legal action is to emit one structured-output object. Spawn these with
+  **no tools** (schema-constrained output only). A judge that reads a file, greps the
+  repo, or re-fetches a diff is misconfigured — there is nothing to fetch, and every such
+  tool turn is pure waste. One job → one structured answer, full stop.
+- **Tool-USING investigation** — `why` **only**. These agents are *supposed* to spend
+  multiple tool turns reading transcripts and the repo (Read/Grep/Glob). This is the one
+  boundary where 1–4 minutes and many tool calls per agent is correct.
+
+If a ranking or judging agent took multiple tool uses, it was spawned with tools it
+should not have had. Constrain the surface, not just the output schema.
+
 ## Runner rules (every boundary)
 
+- **Prompt verbatim, author nothing**: the manifest `prompt` is the complete subagent
+  prompt. Never wrap, paraphrase, re-order, or "improve" it; never debate phrasing. The
+  judging prompts are calibrated and counterbalanced — your edits silently corrupt scores.
 - **Model tiers**: labels, grouping, and pairwise placement = **haiku**; investigations =
   the manifest's `recommended_model` (sonnet default); composition = **opus**. Where a
   manifest carries `recommended_model`, it wins over this table.
