@@ -71,9 +71,19 @@
       they may only cite findings and treatments the deterministic layer produced.
 
   haid benchmark --scores S.json --github-user USER --project NAME [--out FILE]
-      The ADR-0005 v1 self-reported submission payload: summary statistics ONLY (leak
-      check refuses paths/titles/session ids), ladder-version hashes, content hash.
-      Signing + PR submission is `haid submit` (Phase 5, not built).
+      The ADR-0005 v1 self-reported submission row: summary statistics ONLY (leak check
+      refuses paths/titles/session ids), ladder + combiner-config hashes, content hash.
+
+  haid submit --scores S.json --github-user USER --project NAME [--repo PATH] [--dry-run] [--yes]
+      Opt-in publish: build the row, show exactly what becomes PUBLIC + PERMANENT, then
+      open a validated PR (git + gh) adding entries/<user>.json to the data-only benchmark
+      repo. Identity = the GitHub PR author (no local signature, ADR-0005 v1). --dry-run
+      writes the entry and prints the commands without pushing.
+
+  haid rank --scores S.json [--github-user USER] [--board FILE | --refresh]
+      Read-only: where your row lands against the community distribution (same ladders +
+      combiner only). Reads the shipped board snapshot — uploads nothing. --refresh pulls
+      the live board from Pages.
 
 The live (harness) backend never calls a model in-process — it hands comparisons to the
 host agent. See haid.scoring.compare.
@@ -84,6 +94,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -399,6 +410,20 @@ def _load_json(path: str | None) -> dict | None:
     return json.load(open(path, encoding="utf-8")) if path else None
 
 
+def _community_block(scores_doc: dict, label: str, board_path: str | None) -> dict | None:
+    """Rank this window against the community board for the report's context section.
+    Placeholder identity — the report never needs a username; nothing is uploaded."""
+    try:
+        payload = report.benchmark.build_submission(
+            scores_doc, github_username="you", project=(label or "(local)"),
+            generated_at=datetime.now().isoformat(timespec="seconds"))
+    except ValueError:
+        return None
+    board = (report.rank.load_board(board_path) if board_path
+             else report.rank.shipped_board())
+    return report.rank.rank_against(board, payload)
+
+
 def _cmd_report(args) -> int:
     metrics_doc = _load_json(args.metrics)
     why_doc = _load_json(args.why)
@@ -413,9 +438,10 @@ def _cmd_report(args) -> int:
     catalog = report.load_catalog()
     findings = report.build_findings(why_doc=why_doc, tags_doc=tags_doc,
                                      scores_doc=scores_doc, catalog=catalog)
+    community = _community_block(scores_doc, label, args.board) if scores_doc else None
     digest = report.digest_json(metrics_doc=metrics_doc, why_doc=why_doc,
                                 scores_doc=scores_doc, tags_doc=tags_doc,
-                                findings=findings, label=label)
+                                findings=findings, label=label, community=community)
     if args.digest_only:
         print(report.render_digest(digest))
         return 0
@@ -452,6 +478,63 @@ def _cmd_benchmark(args) -> int:
               f"content_hash={payload['content_hash'][:16]}…]")
     else:
         print(text)
+    return 0
+
+
+def _build_payload(args, *, default_user: str) -> dict:
+    scores_doc = _load_json(args.scores)
+    return report.benchmark.build_submission(
+        scores_doc, github_username=(args.github_user or default_user),
+        project=args.project,
+        generated_at=datetime.now().isoformat(timespec="seconds"))
+
+
+def _cmd_submit(args) -> int:
+    payload = _build_payload(args, default_user=args.github_user)
+    repo_root = Path(args.repo) if args.repo else report.submit.find_repo_root()
+    if repo_root is None:
+        print("submit: no benchmark-repo checkout found nearby; pass --repo PATH "
+              "(a local clone of the HAID repo)", file=sys.stderr)
+        return 2
+    print(report.submit.render_public_preview(payload))
+    print()
+    cmds = report.submit.pr_commands(args.github_user, args.project)
+    if args.dry_run:
+        dest = report.submit.write_entry(payload, repo_root)
+        print(f"[dry-run] wrote entry: {dest}")
+        print("[dry-run] would run, from the repo root:")
+        for cmd in cmds:
+            print("    " + " ".join(shlex.quote(c) for c in cmd))
+        return 0
+    if not args.yes:                      # this is PUBLIC + PERMANENT — require consent
+        if not sys.stdin.isatty():
+            print("submit: refusing to publish non-interactively without --yes",
+                  file=sys.stderr)
+            return 2
+        if input("Publish this row to the PUBLIC community board? [y/N] ").strip().lower() \
+                not in ("y", "yes"):
+            print("aborted.")
+            return 1
+    report.submit.write_entry(payload, repo_root)
+    try:
+        url = report.submit.run_pr(repo_root, cmds)
+    except RuntimeError as e:
+        print(f"submit: {e}", file=sys.stderr)
+        return 1
+    print(f"submitted — PR opened: {url}")
+    return 0
+
+
+def _cmd_rank(args) -> int:
+    if args.board:
+        board = report.rank.load_board(args.board)
+    elif args.refresh:
+        board = report.rank.fetch_board(report.rank.BOARD_URL)
+    else:
+        board = report.rank.shipped_board()
+    payload = _build_payload(args, default_user="you")
+    ranking = report.rank.rank_against(board, payload)
+    print(report.rank.render_rank(ranking, payload))
     return 0
 
 
@@ -588,6 +671,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--backend", default="harness", choices=["harness", "replay"])
     rp.add_argument("--composition", help="saved composition JSON (replay backend)")
     rp.add_argument("--job-dir", default="out/jobs", help="manifest dir (harness backend)")
+    rp.add_argument("--board", help="local community board.json for the context section "
+                    "(default: the shipped snapshot)")
     rp.set_defaults(func=_cmd_report)
 
     bm = sub.add_parser("benchmark", help="build the ADR-0005 v1 submission payload (summary only)")
@@ -596,6 +681,29 @@ def build_parser() -> argparse.ArgumentParser:
     bm.add_argument("--project", required=True, help="project display name")
     bm.add_argument("--out", help="write the payload to this file")
     bm.set_defaults(func=_cmd_benchmark)
+
+    sb = sub.add_parser("submit",
+                        help="opt-in: open a PR adding your summary row to the community board")
+    sb.add_argument("--scores", required=True, help="haid score --json output file")
+    sb.add_argument("--github-user", required=True,
+                    help="your GitHub username (entry identity == PR author)")
+    sb.add_argument("--project", required=True, help="project display name")
+    sb.add_argument("--repo", help="local checkout of the benchmark repo (default: auto-detect)")
+    sb.add_argument("--dry-run", action="store_true",
+                    help="write the entry + print the git/gh commands; push nothing")
+    sb.add_argument("--yes", action="store_true",
+                    help="skip the interactive confirmation (publishes immediately)")
+    sb.set_defaults(func=_cmd_submit)
+
+    rk = sub.add_parser("rank",
+                        help="read-only: where your scores land vs the community (uploads nothing)")
+    rk.add_argument("--scores", required=True, help="haid score --json output file")
+    rk.add_argument("--github-user", help="your GitHub username (to exclude your own prior row)")
+    rk.add_argument("--project", default="(local)", help="project display name")
+    rk.add_argument("--board", help="local board.json (default: the shipped snapshot)")
+    rk.add_argument("--refresh", action="store_true",
+                    help="fetch the live board from Pages instead of the shipped snapshot")
+    rk.set_defaults(func=_cmd_rank)
     return p
 
 

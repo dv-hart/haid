@@ -4,6 +4,18 @@ Opt-in public leaderboard of HAID achievement scores. **Default off.** Decision 
 rationale: [ADR-0005](../docs/decisions/0005-community-benchmark.md). This is the
 build plan for **v1 only** (self-reported; the verified tier is deferred — see ADR).
 
+> **Status: v1 built (2026-06-23).** `haid benchmark`/`submit`/`rank` ship; the report
+> renders a "Community benchmark" context section from the bundled board snapshot. The
+> board lives in a **separate, data-only repo** (`dv-hart/haid-benchmark`) gated by a
+> split `validate` (read-only) → `act` (privileged, `workflow_run`) → `build` (Pages)
+> pipeline with SHA-pinned actions; the cross-repo snapshot sync is whitelist-sanitized
+> (`benchmark.sanitize_board`). Built per the
+> [ADR amendment](../docs/decisions/0005-community-benchmark.md#amendment-2026-06-23--v1-build):
+> identity = GitHub PR author (no Ed25519); overall score = total achievement ÷ total
+> tokens; distribution ships as package data. **Remaining (maintainer):** create + push the
+> data repo, enable Pages + auto-merge + branch protection requiring `validate`, publish the
+> pinned `haid` version, then seed the first row.
+
 ## Principles (carried from the ADR)
 
 - **Not trustless — trust-but-verify with low stakes.** v1 is self-reported and

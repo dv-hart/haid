@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.1",
+  "kind": "haid_benchmark_board",
+  "generated_at": null,
+  "n_entries": 0,
+  "note": "Snapshot of the self-reported community board, bundled with the package. Refreshed at release; `haid rank --refresh` pulls the live board from Pages.",
+  "rows": []
+}
