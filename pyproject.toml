@@ -36,4 +36,5 @@ haid = "haid.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-haid = ["data/*.json", "data/anchor_diffs/*.diff"]
+haid = ["data/*.json", "data/anchor_diffs/*.diff", "viz/assets/*.html",
+        "viz/assets/*.css", "viz/assets/*.js"]

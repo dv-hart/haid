@@ -88,7 +88,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import bridge, episodes, intent, report, why, window
+from . import bridge, episodes, intent, report, viz, why, window
 from .episodes import score as episode_score
 from .metrics import json_out, view
 from .scoring import cost, placement, value, volume
@@ -435,8 +435,23 @@ def _cmd_report(args) -> int:
               f"{p.manifest_path}\nWrite its structured output to "
               f"{args.job_dir}/compose.composition.json, then re-run.", file=sys.stderr)
         return 3
-    print(report.render_report(digest, comp))
+    print(report.render_report(digest, comp, artifacts=_report_artifacts(args)))
     return 0
+
+
+def _report_artifacts(args) -> dict:
+    """{label: path} for the report's 'Where to look' footer — only paths that exist."""
+    out: dict[str, str] = {}
+    for label, path in (("metrics", args.metrics), ("scores", args.scores),
+                        ("why", args.why), ("tags", args.tags)):
+        if path and os.path.exists(path):
+            out[label] = path
+    if os.path.isdir(args.job_dir):
+        out["job manifests"] = args.job_dir
+    viz = os.path.join("viz", "index.html")
+    if os.path.exists(viz):
+        out["visualization"] = f"{viz} (open in a browser)"
+    return out
 
 
 def _cmd_benchmark(args) -> int:
@@ -452,6 +467,44 @@ def _cmd_benchmark(args) -> int:
               f"content_hash={payload['content_hash'][:16]}…]")
     else:
         print(text)
+    return 0
+
+
+def _cmd_viz(args) -> int:
+    if args.session:
+        view_, sessions = window.from_files(args.session)
+        label, project_path = "explicit session list", args.project or os.getcwd()
+    else:
+        project_path = args.project or os.getcwd()
+        view_, sessions = window.for_project(project_path, days=args.days)
+        label = view_.label
+    if not sessions:
+        print("no sessions in window", file=sys.stderr)
+        return 2
+
+    session_dicts = [viz.extract_session(s, project_path=project_path) for s in sessions]
+    empty = [d["stem"] for d in session_dicts if not d.get("spine")]
+
+    scores_doc = _load_json(args.scores)
+    grouping_doc = _load_json(args.grouping)
+    metrics_doc = _load_json(args.metrics)
+    bundle = viz.assemble_bundle(session_dicts, scores_doc=scores_doc,
+                                 grouping_doc=grouping_doc, metrics_doc=metrics_doc,
+                                 label=label)
+
+    out_html = viz.write_html(bundle, args.out)
+    note = {"scores": "real episodes + scores", "grouping": "real episodes (no scores)",
+            "single_window": "no grouping artifact — one flat window episode"}
+    print(f"[viz written to {out_html}]  {len(bundle['sessions'])} session(s), "
+          f"{len(bundle['episodes'])} episode(s) ({note[bundle['episode_source']]})")
+    if args.data_js:
+        print(f"[data.js written to {viz.write_data_js(bundle, args.data_js)}]")
+    if empty:
+        print(f"# {len(empty)} session(s) had no active-timeline spine, skipped: "
+              f"{', '.join(empty)}", file=sys.stderr)
+    if bundle["episode_source"] == "single_window" and not args.session:
+        print("# tip: pass --scores out/report/scores.json for the real episode grouping "
+              "and per-episode score badges", file=sys.stderr)
     return 0
 
 
@@ -589,6 +642,19 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--composition", help="saved composition JSON (replay backend)")
     rp.add_argument("--job-dir", default="out/jobs", help="manifest dir (harness backend)")
     rp.set_defaults(func=_cmd_report)
+
+    vz = sub.add_parser("viz", help="render the window visualization (self-contained HTML)")
+    vz.add_argument("--project", help="project path (default: cwd)")
+    vz.add_argument("--days", type=int, default=30, help="window size in days (default 30)")
+    vz.add_argument("--session", nargs="+",
+                    help="explicit session JSONL path(s); overrides --project")
+    vz.add_argument("--scores", help="haid score --json output (real episodes + score badges)")
+    vz.add_argument("--grouping", help="haid episodes grouping JSON (grouping without scores)")
+    vz.add_argument("--metrics", help="haid metrics --json output (file-flag overlay)")
+    vz.add_argument("--out", default="out/report/haid-viz.html",
+                    help="self-contained HTML destination (default out/report/haid-viz.html)")
+    vz.add_argument("--data-js", help="also write the dev data.js bundle here (e.g. viz/data.js)")
+    vz.set_defaults(func=_cmd_viz)
 
     bm = sub.add_parser("benchmark", help="build the ADR-0005 v1 submission payload (summary only)")
     bm.add_argument("--scores", required=True, help="haid score --json output file")

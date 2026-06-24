@@ -208,6 +208,7 @@ def digest_json(*, metrics_doc: dict | None, why_doc: dict | None, scores_doc: d
     return {
         "schema_version": "1.0", "kind": "haid_report_digest", "window": label,
         "metrics_headline": headline,
+        "window_score": (scores_doc or {}).get("window_score"),
         "episodes": (scores_doc or {}).get("episodes", []),
         "findings": [vars(f) for f in findings],
         "n_messages_tagged": len((tags_doc or {}).get("messages", [])),
@@ -390,10 +391,50 @@ class HarnessBackend(ComposeBackend):
         raise PendingComposition(mpath)
 
 
-def render_report(digest: dict, comp: dict) -> str:
-    """The final user-facing report: composed narrative on top of the deterministic digest."""
+def render_scoreboard(digest: dict) -> str:
+    """A compact, glanceable score block surfaced ABOVE the narrative.
+
+    The achievement numbers are already computed (deterministically) per episode; the
+    composed narrative has no slot for them, so without this they stay buried in the
+    appendix. Returns "" when no scored episodes exist (nothing to show)."""
+    eps = [e for e in digest.get("episodes", []) if e.get("value") is not None]
+    if not eps:
+        return ""
+    by_ach = sorted(eps, key=lambda e: e.get("achievement") or 0, reverse=True)
+    rungs = [e["difficulty"]["rung"] for e in eps
+             if e.get("difficulty", {}).get("rung") is not None]
+    L = ["## Scoreboard"]
+    ws = digest.get("window_score") or {}
+    if ws.get("value") is not None:
+        ceil = ws.get("difficulty_ceiling")
+        L.append(f"  window score: {ws['value']:.3g} value  "
+                 f"(achievement {ws.get('achievement_total', '?'):g} / "
+                 f"{ws.get('normalized_tokens_total', '?'):g} nTok"
+                 + (f", difficulty ceiling rung {ceil:g}/10" if ceil is not None else "")
+                 + ")")
+    elif rungs:
+        L.append(f"  difficulty ceiling: rung {max(rungs):g}/10  "
+                 f"(across {len(eps)} scored episode{'s' if len(eps) != 1 else ''})")
+    for e in by_ach[:5]:
+        dd, cc = e.get("difficulty", {}), e.get("cleanliness", {})
+        ach = e.get("achievement", "?")
+        ach_s = f"{ach:>5.1f}" if isinstance(ach, (int, float)) else f"{ach:>5}"
+        L.append(f"    {e['id']} · {e.get('title', '')[:40]:<40} achievement {ach_s} "
+                 f"· D rung {dd.get('rung', '?')} · C p{cc.get('percentile', '?')}")
+    return "\n".join(L)
+
+
+def render_report(digest: dict, comp: dict, artifacts: dict | None = None) -> str:
+    """The final user-facing report: composed narrative on top of the deterministic digest.
+
+    `artifacts` (optional, {label: path}) renders a "Where to look" footer so the report
+    points the user at the saved JSON, the job dir, and the visualization."""
     L = [f"# How am I doing? — {digest.get('window') or 'window'}", "",
          comp["headline"], ""]
+    scoreboard = render_scoreboard(digest)
+    if scoreboard:
+        L.append(scoreboard)
+        L.append("")
     if comp["wins"]:
         L.append("## What went well")
         for w in comp["wins"]:
@@ -413,6 +454,11 @@ def render_report(digest: dict, comp: dict) -> str:
         L.append("")
     if comp["hedges"]:
         L.append(f"## Honest hedges\n{comp['hedges']}")
+        L.append("")
+    if artifacts:
+        L.append("## Where to look")
+        for label, path in artifacts.items():
+            L.append(f"  - {label}: {path}")
         L.append("")
     L.append("---\n_Below: the deterministic breakdown this was composed from._\n")
     L.append(render_digest(digest))
