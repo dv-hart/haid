@@ -84,7 +84,24 @@ class WindowDistribution:
             "schema_version": "1.0", "kind": "episode_scores", "window": self.label,
             "n_episodes": len(self.scores),
             "pending_placements": len(self.pending),
+            "window_score": self._window_score(),
             "episodes": [self._episode_json(s) for s in self.scores],
+        }
+
+    def _window_score(self) -> dict:
+        """The single window-level score: achievement and cost summed across scored episodes,
+        folded into one value ratio (achievement_total / normalized_tokens_total). This is the
+        number a user tracks over time and the figure the opt-in leaderboard ranks."""
+        scored = [s for s in self.scored if s.achievement is not None]
+        ach_total = sum(s.achievement.achievement for s in scored)
+        tok_total = sum(s.normalized_tokens for s in scored)
+        rungs = [s.difficulty.rung for s in scored if s.difficulty is not None]
+        return {
+            "n_scored": len(scored),
+            "achievement_total": round(ach_total, 4),
+            "normalized_tokens_total": round(tok_total, 1),
+            "value": (round(ach_total / tok_total, 6) if tok_total > 0 else None),
+            "difficulty_ceiling": round(max(rungs), 2) if rungs else None,
         }
 
     @staticmethod
