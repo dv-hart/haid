@@ -1,0 +1,115 @@
+/* HAID visualizer — bus diagram. Built piece by piece. STEP 1: columns + turn squares. */
+:root { --font: ui-monospace, "Cascadia Code", Consolas, monospace;
+        --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+body[data-theme="light"] {
+  --bg:#fbfbfa; --panel:#fff; --ink:#24292f; --dim:#6e7781; --strong:#d0d7de;
+  --grid:#eef0f2; --accent:#0969da; --band:#0969da08;
+  --sq:#ffffff; --sq-br:#d0d7de; --user-br:#0969da; --user-bg:#0969da0d;
+  --win-bg:#eaeef2; --win-br:#57606a; --epi-bg:#f3edff; --epi-br:#8250df; --epi-ink:#6639ba;
+  --sess-bg:#eafaf0; --sess-br:#1a7f37;
+}
+body[data-theme="dark"] {
+  --bg:#0d1117; --panel:#161b22; --ink:#c9d1d9; --dim:#8b949e; --strong:#30363d;
+  --grid:#1b2027; --accent:#58a6ff; --band:#58a6ff08;
+  --sq:#1b2230; --sq-br:#30363d; --user-br:#58a6ff; --user-bg:#1f6feb22;
+  --win-bg:#21262d; --win-br:#6e7681; --epi-bg:#2a2140; --epi-br:#a371f7; --epi-ink:#d2a8ff;
+  --sess-bg:#16261c; --sess-br:#3fb950;
+}
+body[data-theme="blueprint"] {
+  --bg:#0a2540; --panel:#0e2e4d; --ink:#cfe3f7; --dim:#7fa8cc; --strong:#245177;
+  --grid:#143150; --accent:#7fd1ff; --band:#7fd1ff08;
+  --sq:#0e3258; --sq-br:#245177; --user-br:#7fd1ff; --user-bg:#7fd1ff14;
+  --win-bg:#123a5e; --win-br:#5e8cb5; --epi-bg:#2a2a55; --epi-br:#b39dff; --epi-ink:#cbb8ff;
+  --sess-bg:#0f3a4a; --sess-br:#5fd1aa;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 13px;
+       display: grid; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+
+header { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 10px 16px;
+         background: var(--panel); border-bottom: 1px solid var(--strong); }
+header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+header h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+.ctl select, .ctl button { background: var(--bg); color: var(--ink); border: 1px solid var(--strong);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: var(--font-ui); cursor: pointer; }
+.ctl button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.stage { position: relative; overflow: auto; }
+svg { display: block; font-family: var(--font); }
+svg text { fill: var(--ink); }
+#hsvg { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.filebox.over:hover .fb-name { fill: var(--accent); }
+
+.zone-cap { fill: var(--dim); font-size: 9.5px; letter-spacing: .6px; }
+.zone-sep { stroke: var(--grid); stroke-width: 1; }
+.turn-band { fill: var(--band); }
+
+.sq { fill: var(--sq); stroke: var(--sq-br); stroke-width: 1; }
+.sq-window { fill: var(--win-bg); stroke: var(--win-br); stroke-width: 2; }
+.sq-episode { fill: var(--epi-bg); stroke: var(--epi-br); stroke-width: 1.5; }
+.sq-session { fill: var(--sess-bg); stroke: var(--sess-br); stroke-width: 1.2; }
+.sq-exchange { stroke: var(--user-br); stroke-width: 1.4; fill: var(--user-bg); }
+.sq-group { fill: var(--grid); stroke: var(--sq-br); stroke-dasharray: 3 2; }
+.row.err .sq { stroke: var(--badge); stroke-width: 1.5; }
+.row[data-exp="1"]:hover .sq { stroke: var(--accent); }
+
+.lbl { fill: var(--ink); }
+.lbl-window { font-size: 11.5px; font-weight: 700; letter-spacing: .3px; }
+.lbl-episode { font-size: 11px; font-weight: 700; fill: var(--epi-ink); }
+.lbl-session { font-size: 10px; font-weight: 600; }
+.lbl-exchange { font-size: 11px; font-weight: 600; }
+.lbl-group { font-size: 9.5px; fill: var(--dim); }
+.sq-say { fill: var(--dim); font-size: 10px; font-style: italic; }
+.sq-tool { font-size: 9.5px; font-weight: 700; }
+.sq-label { fill: var(--ink); font-size: 10px; }
+.sq-tok { fill: var(--dim); font-size: 9px; }
+.sq-badge { fill: var(--dim); font-size: 9px; }
+
+.tog { fill: var(--panel); stroke: var(--accent); stroke-width: 1.3; }
+.tog-t { fill: var(--accent); font-size: 11px; font-weight: 700; }
+
+/* buses — each lane is one continuous "comb" path: bg casing underneath (crossings read as
+   over/under bridges), then a lightened fill with a crisp 1px edge in the file's colour. */
+.comb-casing { fill: var(--bg); stroke: var(--bg); stroke-width: 3.5; stroke-linejoin: round; }
+.comb { stroke-width: 1.1; stroke-linejoin: round; }
+.tap-hit { stroke: rgba(0,0,0,0); fill: none; pointer-events: stroke; }
+.tap-dash { stroke: var(--bg); stroke-width: 1; fill: none; stroke-dasharray: 3 3; opacity: .8; }
+.bundle-lbl { fill: var(--dim); font-size: 8px; font-weight: 600; }
+.filebox rect:first-child { filter: none; }
+.fb-name { fill: var(--ink); font-size: 9px; font-weight: 600; }
+.fb-tok { fill: var(--dim); font-size: 8px; }
+
+/* overflow inspector panel — anchored below the grey "+N others" box */
+.ovpanel { position: absolute; z-index: 4; width: 290px; background: var(--panel);
+  border: 1px solid var(--strong); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.28);
+  font-family: var(--font); font-size: 10px; color: var(--ink); }
+.ovhead { display: flex; align-items: center; padding: 6px 9px; border-bottom: 1px solid var(--strong);
+  font-family: var(--font-ui); font-size: 10.5px; color: var(--dim); }
+.ovhead b { color: var(--ink); }
+.ovclose { margin-left: auto; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 3px; color: var(--dim); }
+.ovclose:hover { color: var(--accent); }
+.ovlist { max-height: 300px; overflow-y: auto; padding: 3px 0; }
+.ovrow { display: flex; align-items: center; gap: 6px; padding: 2.5px 9px; cursor: pointer; white-space: nowrap; }
+.ovrow:hover { background: var(--band); }
+.ovrow.ranked { cursor: default; opacity: .55; }
+.ovpin { width: 10px; flex: none; color: var(--dim); }
+.ovrow.pinned .ovpin { color: var(--accent); }
+.ovsw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.ovname { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.ovtok { color: var(--dim); flex: none; }
+.ovbar { width: 54px; height: 5px; background: var(--grid); border-radius: 2px; flex: none; overflow: hidden; }
+.ovbar i { display: block; height: 100%; background: var(--dim); border-radius: 2px; }
+.ovrow.pinned .ovbar i { background: var(--accent); }
+
+body[data-theme="light"] { --badge:#cf222e; }
+body[data-theme="dark"] { --badge:#f85149; }
+body[data-theme="blueprint"] { --badge:#ff7a85; }
+
+footer.legend { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--strong); border-radius: 8px; padding: 7px 14px;
+  font-size: 11px; color: var(--dim); pointer-events: none; white-space: nowrap; }
+footer.legend b { color: var(--ink); }
