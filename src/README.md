@@ -80,8 +80,8 @@ projects — see [../plans/roadmap.md](../plans/roadmap.md) Phase-5 Bridge note)
 the full stack on real sessions); `bridge` reconstructs + prints the diff/cost/caveats.
 
 ## Tests & status
-`tests/` (163 passing, deterministic, model-free). The scoring stack now runs end-to-end on
+`tests/` (deterministic, model-free; run `python -m pytest`). The scoring stack now runs end-to-end on
 real sessions via the bridge. Remaining for Phase 1: DoD validation on the maintainer's own
 sessions. Deferred: the waste→value reconciliation (expressing waste in normalized tokens) and
 the **episode-grain** bridge refinement (per-episode diffs, needs Phase-2 episodes). See
-[../plans/roadmap.md](../plans/roadmap.md) and [../plans/phase1-build.md](../plans/phase1-build.md).
+[../plans/roadmap.md](../plans/roadmap.md) and [../plans/archive/phase1-build.md](../plans/archive/phase1-build.md).

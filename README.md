@@ -10,34 +10,40 @@ what to change."
 **Nothing leaves your machine** unless you explicitly choose to submit aggregate
 metrics.
 
-> Status: **Phase 1 complete; the full scoring stack now runs on real sessions** — the
-> deterministic pipeline runs end to end on real transcripts (163 tests, stdlib-only, no model
-> in the loop):
+> Status: **the full coaching pipeline runs end to end on real sessions** — stdlib-only,
+> with no model in the loop inside the CLI (model judgment is delegated to the host agent
+> via job manifests; see [Activating in Claude Code](#activating-in-claude-code)). The chain
+> is `metrics → tag → episodes → score → why → report`:
 > - **Session parsing** (`src/haid/session/`) — forest-aware JSONL parsing: dedup,
 >   branch/rewind classification, subagent stitching, overflow resolution, SQLite cache.
 > - **Session graph** (`src/haid/graph/`) — L0 spine + L1 action/IO graph
 >   (reads/produces/edits from `structuredPatch`), signatures, per-timeline scoping.
 > - **Waste metrics** (`src/haid/metrics/`) — `rereads`, `retries`, `retouched`,
 >   `unused_context`: one rule each, run at **session and window scope**, as benchmarkable
->   token-rates placed against a per-scope baseline.
+>   token-rates placed against a per-scope baseline (`haid metrics`).
 > - **Analysis window** (`src/haid/window.py`) — the multi-session unit metrics run over
 >   (a project over a timeframe, default 30 days).
+> - **Bridge** (`src/haid/bridge/`) — reconstructs a window's net code diff from the
+>   **transcript alone** (replay, no git) plus its normalized-token cost (`haid bridge`).
 > - **Scoring** (`src/haid/scoring/`) — the relative achievement/cost value scorer
 >   (difficulty + cleanliness placement, volume, normalized-token cost, value combiner),
->   calibration-validated. Built ahead of the earlier phases.
+>   calibration-validated (`haid volume`/`cost`/`place`/`value`).
+> - **Intent tagging** (`src/haid/intent/`) — move × work-type + purpose-snapshot labels
+>   for every user message (`haid tag`).
+> - **Episodes** (`src/haid/episodes/`) — group whole sessions into the git-free PR proxy and
+>   score each as a per-episode value distribution (`haid episodes`, `haid score`).
+> - **Why-pass** (`src/haid/why/`) — per-anchor investigation agents over the top waste
+>   instances, with cited evidence and hedged remedies (`haid why`).
+> - **Report** (`src/haid/report/`) — the compositor: a deterministic what/why digest plus a
+>   composed coaching report, with validated recommendations (`haid report`).
+> - **Visualization** (`src/haid/viz/`) — a self-contained HTML render of the window (the
+>   time-layered bus diagram) from the same substrate (`haid viz`).
+> - **Community benchmark** (`src/haid/report/benchmark.py`) — a summary-only, opt-in payload
+>   (`haid benchmark`), a read-only local comparison vs the board (`haid rank`), and the
+>   PR-based opt-in submission (`haid submit`).
 >
-> - **`haid metrics`** (`src/haid/metrics/{json_out,view}.py` + CLI) — the measured substrate:
->   four waste metrics at **session and window scope**, each placed against a per-scope
->   baseline, as a Markdown inspection view + a JSON hand-off to the later "why" passes.
-> - **Bridge** (`src/haid/bridge/`) — reconstructs an analysis window's net code diff from the
->   **transcript alone** (replay, no git) plus its normalized-token cost, so `haid bridge` and
->   `haid value --project/--session` now run the **full scoring stack on real sessions**
->   (previously the scorer only ran on supplied/calibration diffs).
->
-> All validated on real transcripts (163 tests). The user-facing **report and visualization are
-> the final product**, composing this substrate with the Phase-2/3 why-analysis and the value
-> score. Next: the diagnosis router, episode segmentation (Phase 2), and the visualization
-> (Phase 1.5). See [plans/roadmap.md](plans/roadmap.md) and [plans/phase1-build.md](plans/phase1-build.md).
+> All validated on real transcripts (`python -m pytest`, stdlib-only). The user-facing
+> **report and visualization are the final product**. See [plans/roadmap.md](plans/roadmap.md).
 
 ## Installation
 
@@ -146,8 +152,9 @@ other where it did the *right thing wastefully*. See
 | [docs/scoring-rubric.md](docs/scoring-rubric.md) | Achievement vs. cost — the **relative** value verdict (revised; see ladder/playbook) |
 | [docs/difficulty-ladder.md](docs/difficulty-ladder.md) | The validated difficulty scorer (reference ladder + placement) |
 | [docs/cleanliness-ladder.md](docs/cleanliness-ladder.md) | The cleanliness/parsimony scorer (reference ladder + placement) |
+| [docs/metrics-output-schema.md](docs/metrics-output-schema.md) | The `haid metrics --json` contract consumed by the later passes |
+| [docs/treatments.md](docs/treatments.md) | The remedy catalog matched mechanically in `haid report` |
 | [docs/axis-calibration-playbook.md](docs/axis-calibration-playbook.md) | Self-contained recipe to calibrate a new scoring axis (worked example: cleanliness; originality calibrated then dropped) |
-| [docs/calibration-pilot-1.md](docs/calibration-pilot-1.md) | Pilot report: why mined review-signals don't validate difficulty |
 | [docs/visualization.md](docs/visualization.md) | The time-layered bus diagram (left-in/right-out, bundled) |
 | [docs/claude-code-data-format.md](docs/claude-code-data-format.md) | **Verified** Claude Code on-disk data reference |
 | [docs/data-inventory.md](docs/data-inventory.md) | Field catalog from 38 real sessions: what's auto-taggable vs. inferred |
@@ -156,9 +163,12 @@ other where it did the *right thing wastefully*. See
 | [docs/tooling-landscape.md](docs/tooling-landscape.md) | Existing tools and what to build on |
 | [docs/decisions/](docs/decisions/) | Architecture Decision Records (ADRs) |
 | [plans/roadmap.md](plans/roadmap.md) | Phased delivery plan |
-| [plans/mvp.md](plans/mvp.md) | The minimum thing that tests the core risk |
-| [plans/phase1-build.md](plans/phase1-build.md) | The concrete Phase-1 build sequence + progress |
+| [plans/agent-analysis.md](plans/agent-analysis.md) | The model-in-the-loop "why" pass design (episodes, anchors, two-stage) |
+| [plans/community-benchmark.md](plans/community-benchmark.md) | The opt-in self-reported benchmark design (ADR-0005) |
 | [plans/open-questions.md](plans/open-questions.md) | Decisions to make / behaviors to verify early |
+
+The shipped Phase-1 build logs (`mvp.md`, `phase1-build.md`, `step4-build.md`) are kept for
+history under [plans/archive/](plans/archive/).
 
 ## Repository layout
 
@@ -167,16 +177,22 @@ HAID/
 ├── README.md                 # you are here
 ├── docs/                     # design & reference documentation
 │   └── decisions/            # ADRs
-├── plans/                    # roadmap, MVP spec, open questions
-├── research/                 # raw research reports (inputs to the docs)
-├── calibration/              # the scoring-axis calibration harness (experiment code)
+├── plans/                    # roadmap + active design notes (shipped build-logs in plans/archive/)
 ├── src/haid/                 # implementation
-│   ├── session/              #   Phase-1 parse: forest model, subagents, overflow, cache
+│   ├── session/              #   parse: forest model, subagents, overflow, cache
 │   ├── graph/                #   L0 spine + L1 IO graph (incl. Bash read/write parsing)
 │   ├── metrics/              #   the four waste metrics + baseline + `haid metrics` emitter
 │   ├── window.py             #   the multi-session analysis window
+│   ├── bridge/               #   transcript→(diff, usage) reconstruction (the bridge)
 │   ├── scoring/              #   relative value scorer (difficulty/cleanliness/volume/cost/value)
-│   └── bridge/               #   transcript→(diff, usage) reconstruction (the bridge)
-├── tests/                    # session/ graph/ metrics/ scoring/ bridge/ suites (+ fixtures/)
-└── scripts/                  # build_metric_baselines.py + CLI helpers
+│   ├── intent/               #   move × work-type message tagging (`haid tag`)
+│   ├── episodes/             #   session→episode grouping + per-episode scoring
+│   ├── why/                  #   per-anchor investigation agents (`haid why`)
+│   └── report/               #   digest + composed coaching report (`haid report`)
+├── tests/                    # session/ graph/ metrics/ scoring/ bridge/ intent/ episodes/ why/ report/
+└── scripts/                  # build_metric_baselines.py (regenerates shipped data)
 ```
+
+> The one-time scoring-axis **calibration harness** and the raw **research probes** that seeded
+> the docs live on the `archive/experiments` branch — their validated output already ships in
+> `src/haid/data/`, so they're kept for provenance rather than on `main`.

@@ -4,7 +4,7 @@
 > (this JSON) + `src/haid/metrics/view.py` (the Markdown view, rendered from the same dict).
 > It is the **machine-readable hand-off** to the later "why" passes (intent-tagging in Phase 2,
 > error-attribution / `why()` in Phase 3). The Markdown view is the maintainer's eyeball/DoD
-> surface; this JSON is the contract. See [phase1-build.md](../plans/phase1-build.md) Step 5.
+> surface; this JSON is the contract. See [phase1-build.md](../plans/archive/phase1-build.md) Step 5.
 
 ## What this is (and is not)
 
@@ -261,5 +261,5 @@ Pure measurement — no remedy lines.
 
 ## Related
 - Metric definitions: [detectors.md](detectors.md).
-- Build step + scope doctrine: [phase1-build.md](../plans/phase1-build.md) Step 5 + §0.5.
+- Build step + scope doctrine: [phase1-build.md](../plans/archive/phase1-build.md) Step 5 + §0.5.
 - The why-passes that consume this: roadmap [Phase 2 / Phase 3](../plans/roadmap.md).

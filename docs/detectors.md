@@ -14,7 +14,7 @@ wolf (see [trust-discipline.md](trust-discipline.md)).
 > 1. **Unit = the analysis WINDOW, not the episode.** Episodes (Phase 2) aren't built yet;
 >    the MVP denominator is a project's sessions over a timeframe (default 30 days). A
 >    `timeline` (root→leaf path) is the internal correctness floor (rewind branches don't
->    bleed). See [phase1-build.md](../plans/phase1-build.md) §0.5 + Steps 3+4.
+>    bleed). See [phase1-build.md](../plans/archive/phase1-build.md) §0.5 + Steps 3+4.
 > 2. **Output is a benchmarkable token-RATE, not a verdict.** Each metric reports
 >    `wasted tokens / total tokens of that kind`, positioned against a population baseline
 >    (`metrics.baseline`) — the same placement-against-reference idea as the scoring axes.

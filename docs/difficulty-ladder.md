@@ -1,7 +1,8 @@
 # Difficulty ladder — the production scorer
 
 > **Status: difficulty mechanism validated (2026-06-04).** Haiku-on-ladder reproduces
-> the Opus sort at ρ=0.87 ([calibration-experiment.md §13](calibration-experiment.md)).
+> the Opus sort at ρ=0.87 (calibration experiment log §13, archived on the
+> `archive/experiments` branch).
 > **The score is RELATIVE** — a diff's placement on the ladder — **not an absolute tier
 > or SEH** (absolute grounding was dropped; tiering leaked size). The tier scale below
 > is the **convergence cross-check** and an optional coarse *rendering*, never the score.

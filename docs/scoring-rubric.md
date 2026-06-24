@@ -3,9 +3,9 @@
 > **Status: calibration validated for the difficulty axis (2026-06-04).** The
 > approach below was **substantially revised by the calibration pilots** — the
 > achievement score is now **RELATIVE, not absolute**, with **no senior-engineer-hours
-> grounding** and **no uncertainty bands** (all three proved unreliable; see
-> [calibration-pilot-1.md](calibration-pilot-1.md) and
-> [calibration-experiment.md](calibration-experiment.md) §13). The validated mechanism
+> grounding** and **no uncertainty bands** (all three proved unreliable; the pilot and
+> full experiment log are archived with the calibration harness on the
+> `archive/experiments` branch). The validated mechanism
 > and how to extend it to the cleanliness axis:
 > **[difficulty-ladder.md](difficulty-ladder.md)** + **[axis-calibration-playbook.md](axis-calibration-playbook.md)**.
 > **Originality was dropped as a scoring axis (2026-06-05)** — see the Axis decision note below.
@@ -89,8 +89,9 @@ later only as a contamination-immune sanity floor.)
 ### Axis decision — originality dropped (2026-06-05)
 
 The combined achievement is **`f(volume[LOC], difficulty, cleanliness)`** — three terms,
-not four. Originality was calibrated ([originality-ladder.md](originality-ladder.md)) and
-then **dropped as a co-equal axis** because it doesn't earn its place:
+not four. Originality was calibrated (the originality-ladder record is archived on the
+`archive/experiments` branch) and then **dropped as a co-equal axis** because it doesn't
+earn its place:
 
 - **It saturates.** The independent classification of real merged code tops out at "mid"
   originality (zero "high" anchors) — genuine novelty is vanishingly rare, so the axis is
@@ -116,7 +117,7 @@ then **dropped as a co-equal axis** because it doesn't earn its place:
 > The full validated recipe is [axis-calibration-playbook.md](axis-calibration-playbook.md);
 > the worked difficulty example is [difficulty-ladder.md](difficulty-ladder.md). The
 > earlier plan (mined PR review-signals as ground truth, expert raters, absolute SEH)
-> was **falsified/dropped** — see [calibration-pilot-1.md](calibration-pilot-1.md). In
+> was **falsified/dropped** — see the pilot report on the `archive/experiments` branch. In
 > brief:
 
 - **Reference corpus = real code changes spanning the range HAID's users produce** —

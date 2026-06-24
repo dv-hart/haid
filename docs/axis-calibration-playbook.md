@@ -6,11 +6,11 @@
 > and was the least difficulty-distinct axis, so the orthogonality/usefulness gates
 > correctly rejected it. See scoring-rubric.md Axis decision. The recipe is axis-agnostic;
 > the originality prompt in §3 is retained as a worked example.) A fresh session can
-> follow this start to finish. **Canonical entry point:** where this disagrees with
-> older docs, this wins. The difficulty axis is the worked example
-> ([difficulty-ladder.md](difficulty-ladder.md)); the experiment history is in
-> [calibration-experiment.md](calibration-experiment.md) §12–13 and
-> [calibration-pilot-1.md](calibration-pilot-1.md).
+> follow this start to finish. **Canonical entry point:** this doc supersedes the older
+> calibration write-ups. The difficulty axis is the worked example
+> ([difficulty-ladder.md](difficulty-ladder.md)); the full experiment log, the pilot
+> report, and the dropped-originality record live with the calibration harness on the
+> `archive/experiments` branch.
 
 ---
 

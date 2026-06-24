@@ -7,8 +7,9 @@ Two jobs:
     logic counts more than config, generated/lockfile content counts ~nothing, tests are
     tracked but down-weighted (they are achievement, but not product logic).
 
-Ported from calibration/filekind.py (which serves the experiment harness) and extended
-with the weight tiers and test detection the volume measure needs. Kept stdlib-only.
+Ported from the calibration harness's filekind helper (now on the `archive/experiments`
+branch) and extended with the weight tiers and test detection the volume measure needs.
+Kept stdlib-only.
 """
 
 from __future__ import annotations

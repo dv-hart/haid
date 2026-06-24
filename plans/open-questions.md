@@ -61,7 +61,7 @@ session — resolve in the multi-session aggregation layer).
 ### V4. Resumed-session duplication / branching — ✅ RESOLVED + BUILT (2026-06-06)
 Dedup is by record **`uuid`** (no collisions; ccusage-style). The transcript is a
 **forest**, not a line — see [claude-code-data-format.md](../docs/claude-code-data-format.md)
-§Threading and [phase1-build.md](phase1-build.md) §0.5 for the four branch shapes
+§Threading and [phase1-build.md](archive/phase1-build.md) §0.5 for the four branch shapes
 (structural / rewind / resume-trunk / interrupt), the `leafUuid`+timestamp active-branch
 resolution, and the timeline-scoping rule. Built in `src/haid/session/forest.py`,
 validated on 65 transcripts (12 boxBot rewinds, 0 false positives).
@@ -109,7 +109,7 @@ out in dedicated sessions.
 ### D1. Scoring rubric ([scoring-rubric.md](../docs/scoring-rubric.md))
 **Largely resolved for difficulty (2026-06-04).** The score is **relative** (placement
 against a reference ladder), not absolute SEH; mined review-signals as ground truth and
-absolute grounding were **falsified/dropped** ([calibration-pilot-1.md](../docs/calibration-pilot-1.md)).
+absolute grounding were **falsified/dropped** (pilot report archived on the `archive/experiments` branch).
 Validated mechanism: **dense all-pairs of a small blinded anchor set → bulletproof
 ordering → place new diffs against it** (cheap Haiku reproduces it, ρ≈0.87);
 cross-method convergence (pairwise ≡ coarse classification) replaces human labels. Unit

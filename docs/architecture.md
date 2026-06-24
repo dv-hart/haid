@@ -17,7 +17,7 @@ orthogonal analysis passes over that graph, and renders a hedged report.
 > `(4) REPORT` node below is the *final product*
 > that **composes both passes** (and the value score) with hedged interpretation — it is not
 > the Phase-1 step; the user-anchored pass (3a), episodes, and that composed report are later.
-> See [roadmap.md](../plans/roadmap.md) and [phase1-build.md](../plans/phase1-build.md).
+> See [roadmap.md](../plans/roadmap.md) and [phase1-build.md](../plans/archive/phase1-build.md).
 
 ```
   ~/.claude/projects/<proj>/*.jsonl ──┐

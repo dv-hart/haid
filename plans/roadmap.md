@@ -23,29 +23,29 @@ Structure, research, documentation, plans. ✅ mostly done.
 
 ## Phase 1 — MVP: objective metrics
 The cheapest test of the core risk (is the diagnosis trustworthy?). Full spec in
-[mvp.md](mvp.md); the concrete sequenced build is in
-[phase1-build.md](phase1-build.md). In build-layer terms this is **L0 + L1 + the
+[mvp.md](archive/mvp.md); the concrete sequenced build is in
+[phase1-build.md](archive/phase1-build.md). In build-layer terms this is **L0 + L1 + the
 Tier-2 metrics** (no episodes, no agents yet). **Scope amended 2026-06-06:** the unit
 of analysis is the **analysis window** — a project's sessions over a timeframe (default
 30 days), not one transcript (coaching value is cumulative). Metrics are emitted as
 **benchmarkable token-rates positioned against a baseline**, not raw verdicts. SQLite
 parse cache (zero user friction); git/PR-grouping and cross-session line lineage deferred
-to Phase 4. See [phase1-build.md §0 + §0.5](phase1-build.md).
+to Phase 4. See [phase1-build.md §0 + §0.5](archive/phase1-build.md).
 1. Parse the JSONL (incl. subagent stitching + overflow tool-results). ✅ **DONE
    2026-06-06** — `src/haid/session/` (forest-aware parse, dedup, branch/rewind
    classifier, subagent stitching, overflow, SQLite cache), validated on 65 real
-   transcripts; see [phase1-build.md](phase1-build.md) Step 1.
+   transcripts; see [phase1-build.md](archive/phase1-build.md) Step 1.
 2. Build the session graph (L0 spine + L1 action/IO graph, all Tier 1). ✅ **DONE
    2026-06-06** — `src/haid/graph/` (Turn/ToolCall/File/Region nodes,
    reads/produces/edits from `structuredPatch`, signatures, per-timeline scoping),
-   validated on 65 transcripts; see [phase1-build.md](phase1-build.md) Step 2.
+   validated on 65 transcripts; see [phase1-build.md](archive/phase1-build.md) Step 2.
 3. Compute the four objective waste metrics (re-reads, retry loops, re-touched
    lines, unused-context) — Tier 2 rules. ✅ **DONE 2026-06-06** — `src/haid/metrics/`,
    validated on 65 transcripts (retries high-precision; the volume metrics are
    correct-but-noisy and need report-level ranking/hedging). Bash-failure rule resolved
-   (`is_error`). See [phase1-build.md](phase1-build.md) Steps 3+4.
+   (`is_error`). See [phase1-build.md](archive/phase1-build.md) Steps 3+4.
 4. Emit the measured substrate via **`haid metrics`** ✅ **BUILT 2026-06-07**
-   (`src/haid/metrics/{json_out,view}.py` + CLI; 163 tests suite-wide) — *not* "the report"
+   (`src/haid/metrics/{json_out,view}.py` + CLI) — *not* "the report"
    ("report" is reserved for the Phase-5 final product). Pure measurement: each metric +
    baseline placement + ranked traceable instances + a no-silent-caps footer, reported at
    **both `session` and `window` scope** (the metric × scope model), as an inspection view
@@ -158,7 +158,7 @@ sessions; corrections reliably close episodes; the purpose timeline surfaces dri
 > Bridge note below). The **episode-grain** scoring is now BUILT (2026-06-08, Phase-2 step 4):
 > `bridge.episode_inputs` runs the bridge over an episode's session subset and `episodes/score.py`
 > (`haid score`) emits a **per-episode `WindowDistribution`** (not a blended window diff, so the
-> critical 5% isn't buried; see [agent-analysis.md §5](agent-analysis.md) + [step4-build.md](step4-build.md)).
+> critical 5% isn't buried; see [agent-analysis.md §5](agent-analysis.md) + [step4-build.md](archive/step4-build.md)).
 > Remaining in this phase: the **diagnosis router**, the **skill glue** that drives the live
 > comparison subagents (placement + grouping + classification share the manifest/backend pattern),
 > and the plugin packaging.
