@@ -1,0 +1,50 @@
+name: sync-board
+
+# Refresh the bundled community-board snapshot (src/haid/data/benchmark_board.json) from
+# the data-only benchmark repo, then open a reviewable PR. Runs ONLY trusted package code;
+# the sole external input is the fetched board.json, which scripts/sync_board.py neutralizes
+# via benchmark.sanitize_board (integrity + leak guard + field whitelist) before writing.
+# Nothing from the benchmark repo is checked out or executed here.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"          # weekly, Monday 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.x"
+      - run: pip install -e .
+
+      - name: Refresh the snapshot (sanitized)
+        run: PYTHONPATH=src python scripts/sync_board.py
+
+      - name: Open a PR if the snapshot changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/haid/data/benchmark_board.json; then
+            echo "snapshot unchanged — nothing to sync"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          branch="sync-board/${GITHUB_RUN_ID}"
+          git checkout -B "$branch"
+          git add src/haid/data/benchmark_board.json
+          git commit -m "data: refresh community board snapshot"
+          git push -u origin "$branch"
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" \
+            --title "Refresh community board snapshot" \
+            --body "Automated, sanitized refresh of the bundled board snapshot from the benchmark repo (sync_board.py → benchmark.sanitize_board). Data-only."

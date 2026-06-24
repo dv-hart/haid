@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "haid"
-version = "0.0.1"
+version = "0.0.2"
 description = "How Am I Doing — local-only self-audit & coaching for Claude Code sessions"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,3 +37,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 haid = ["data/*.json", "data/anchor_diffs/*.diff"]
+# data/benchmark_board.json (the community board snapshot `haid rank`/`haid report` read)
+# is covered by data/*.json above; refreshed by scripts/sync_board.py (sanitized) from the
+# data-only benchmark repo.

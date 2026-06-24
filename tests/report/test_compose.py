@@ -39,10 +39,14 @@ SCORES_DOC = {"window": "w", "episodes": [
     {"id": "ep1", "title": "easy big", "has_artifact": True, "normalized_tokens": 9000.0,
      "difficulty": {"rung": 1.0, "percentile": 0.11},
      "cleanliness": {"percentile": 0.2}, "achievement": 2.0, "value": 0.0002,
+     "achievement_components": {"volume_loc": 400.0, "volume_term": 20.0,
+                                "difficulty_D": 0.1, "cleanliness_C": 0.04},
      "metrics": {}, "session_ids": ["s1"], "n_sessions": 1, "caveats": []},
     {"id": "ep2", "title": "hard small", "has_artifact": True, "normalized_tokens": 100.0,
      "difficulty": {"rung": 8.0, "percentile": 0.89},
      "cleanliness": {"percentile": 0.9}, "achievement": 50.0, "value": 0.5,
+     "achievement_components": {"volume_loc": 120.0, "volume_term": 11.0,
+                                "difficulty_D": 9.0, "cleanliness_C": 0.81},
      "metrics": {}, "session_ids": ["s2"], "n_sessions": 1, "caveats": []},
 ]}
 
@@ -144,6 +148,40 @@ def test_benchmark_payload_deterministic_and_clean():
     # nothing leak-shaped survives
     text = json.dumps(p1)
     assert "session_ids" not in text and "easy big" not in text
+
+
+def test_benchmark_row_fields():
+    p = benchmark.build_submission(SCORES_DOC, github_username="jhart", project="HAID",
+                                   generated_at="T")
+    # the leaderboard-row scalars the table renders
+    assert p["achievement_total"] == 52.0           # 2 + 50
+    assert p["volume_loc_total"] == 520.0           # 400 + 120
+    assert p["normalized_tokens_total"] == 9100.0
+    assert p["value_overall"] == round(52.0 / 9100.0, 6)   # total/total
+    assert p["difficulty_rung_median"] == 8.0       # median of [1, 8] (upper)
+    assert p["cleanliness_pct_median"] == 0.9
+    # comparability keys present and stable
+    assert p["combiner_config_hash"] == benchmark.combiner_config_hash()
+    assert p["tool_version"] and "signature" not in p
+    assert p["self_reported"] is True
+
+
+def test_community_section_renders_with_cta():
+    me = benchmark.build_submission(SCORES_DOC, github_username="you", project="HAID",
+                                    generated_at="T")
+    # a comp with no community block -> no section; with one -> section + CTA
+    comp = {"headline": "h", "wins": [], "recommendations": [], "watchlist": [],
+            "hedges": "thin"}
+    bare = digest_json(metrics_doc=None, why_doc=None, scores_doc=SCORES_DOC,
+                       tags_doc=None, findings=[], label="w")
+    assert "Community benchmark" not in render_report(bare, comp)
+    from haid.report import rank
+    peer = {**me, "github_username": "other", "value_overall": 99.0}
+    community = rank.rank_against({"rows": [peer]}, me)
+    d = digest_json(metrics_doc=None, why_doc=None, scores_doc=SCORES_DOC,
+                    tags_doc=None, findings=[], label="w", community=community)
+    out = render_report(d, comp)
+    assert "Community benchmark" in out and "haid submit" in out
 
 
 def test_benchmark_leak_refusal():

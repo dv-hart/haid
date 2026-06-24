@@ -199,16 +199,34 @@ add remedies of your own — the hedges and caveats are load-bearing trust disci
 Cheap path: `--digest-only` skips the model entirely; offer it when the user wants a
 zero-cost or fully-deterministic answer.
 
-### 7. Benchmark payload (explicit opt-in ONLY)
+### 7. Community benchmark — view, then (opt-in) submit
+
+The report's final rendering already includes a deterministic **"Community benchmark"**
+context section when scores exist: it shows where this window lands against the shipped
+board snapshot (same ladders + combiner only) and an opt-in invite to submit. That
+section is computed locally and **uploads nothing** — `haid report --board FILE` can
+point at a different board, otherwise the bundled snapshot is used.
+
+Two explicit commands, both opt-in and summary-only (a leak check refuses anything path-
+or title-shaped). **Never imply submission is expected** — it is default-off:
 
 ```
-haid benchmark --scores out/report/scores.json --github-user USER --project NAME --out FILE
+haid rank   --scores out/report/scores.json [--github-user USER] [--refresh]
+haid submit --scores out/report/scores.json --github-user USER --project NAME [--dry-run]
 ```
 
-Summary-statistics-only payload for the ADR-0005 community benchmark (a leak check
-refuses anything path- or title-shaped; `signature: null` until `haid submit` ships).
-The benchmark is opt-in by design — build this **only when the user explicitly asks**,
-and never imply submission is expected. Signing/PR submission is not built yet; say so.
+- **`haid rank`** is read-only: prints the user's percentile vs the community. `--refresh`
+  pulls the live board from Pages; otherwise the shipped snapshot. No account needed.
+- **`haid submit`** is the only path that leaves the machine, and only when the user
+  explicitly asks. It prints **exactly the row that becomes public + permanent**, then
+  opens a validated GitHub PR (`git` + `gh`) adding `entries/<user>.json` to the separate
+  **data-only** benchmark repo (`dv-hart/haid-benchmark`). Identity is the authenticated PR
+  author (no local signature). Use `--dry-run` first to show the entry + the git/gh
+  commands without pushing; pass `--yes` only when the user has confirmed. Needs a local
+  checkout of the benchmark repo (`--repo PATH`, or auto-detected via its
+  `.haid-benchmark-repo` marker). The repo-side workflows validate (hashes, leak guard,
+  plausibility, author == username) and auto-merge. `haid benchmark` still emits the raw
+  payload alone if that's all the user wants.
 
 ## Runner rules (every boundary)
 
