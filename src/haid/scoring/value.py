@@ -59,6 +59,14 @@ DEFAULT_GAMMA = 2.0         # cleanliness penalty steepness
 DEFAULT_FLOOR = 0.001       # cleanliness floor: anti-LOC-spam guard
 
 
+def combiner_config(*, alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
+                    gamma: float = DEFAULT_GAMMA, floor: float = DEFAULT_FLOOR) -> dict:
+    """The combiner knobs that fold the axes into `value`. Single source of truth for the
+    combiner-config hash: two users on the same ladders but different knobs are NOT
+    comparable, so the benchmark payload pins these (ADR-0005)."""
+    return {"alpha": alpha, "top_ratio": top_ratio, "gamma": gamma, "floor": floor}
+
+
 @dataclass(frozen=True)
 class DifficultyWorth:
     """The convex difficulty multiplier and the latent it was derived from."""

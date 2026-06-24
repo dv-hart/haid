@@ -196,8 +196,15 @@ def build_findings(*, why_doc: dict | None = None, tags_doc: dict | None = None,
 
 # --- layer 2: the deterministic digest ----------------------------------------------
 def digest_json(*, metrics_doc: dict | None, why_doc: dict | None, scores_doc: dict | None,
-                tags_doc: dict | None, findings: list[Finding], label: str = "") -> dict:
-    """The full deterministic hand-off: everything the composition agent may use."""
+                tags_doc: dict | None, findings: list[Finding], label: str = "",
+                community: dict | None = None) -> dict:
+    """The full deterministic hand-off: everything the composition agent may use.
+
+    `community` (optional) is the precomputed rank-vs-board block (rank.rank_against);
+    it rides on the digest only to drive render_report's deterministic context section,
+    and is deliberately NOT offered to the composition agent (the report never coaches
+    toward the leaderboard).
+    """
     headline = []
     if metrics_doc:
         for m in metrics_doc.get("measurements", []):
@@ -213,6 +220,7 @@ def digest_json(*, metrics_doc: dict | None, why_doc: dict | None, scores_doc: d
         "findings": [vars(f) for f in findings],
         "n_messages_tagged": len((tags_doc or {}).get("messages", [])),
         "caveats": (metrics_doc or {}).get("caps", {}).get("notes", []),
+        "community": community,
     }
 
 
@@ -455,6 +463,10 @@ def render_report(digest: dict, comp: dict, artifacts: dict | None = None) -> st
     if comp["hedges"]:
         L.append(f"## Honest hedges\n{comp['hedges']}")
         L.append("")
+    community = render_community(digest.get("community"))
+    if community:
+        L.append(community)
+        L.append("")
     if artifacts:
         L.append("## Where to look")
         for label, path in artifacts.items():
@@ -462,4 +474,31 @@ def render_report(digest: dict, comp: dict, artifacts: dict | None = None) -> st
         L.append("")
     L.append("---\n_Below: the deterministic breakdown this was composed from._\n")
     L.append(render_digest(digest))
+    return "\n".join(L)
+
+
+_COMMUNITY_LABELS = {"value_overall": "overall score", "achievement_total": "achievement",
+                     "difficulty_rung_median": "difficulty",
+                     "cleanliness_pct_median": "cleanliness"}
+
+
+def render_community(community: dict | None) -> str:
+    """Deterministic 'where you land' context + an opt-in submit invite. Returns '' when
+    there's nothing to show. Never implies submission is expected (it's default-off)."""
+    if not community or not community.get("axes"):
+        return ""
+    n = community.get("n_peers", 0)
+    L = ["## Community benchmark (self-reported, opt-in)"]
+    if n == 0:
+        L.append("No comparable community entries shipped for your ladder+combiner version "
+                 "yet — submitting would seed this bucket.")
+    else:
+        L.append(f"Where this window lands against {n} comparable "
+                 f"{'entry' if n == 1 else 'entries'} (same ladders + combiner):")
+    for axis, a in community["axes"].items():
+        pc = a.get("percentile")
+        pct = "—" if pc is None or pc != pc else f"p{round(pc * 100):d}"
+        L.append(f"  - {_COMMUNITY_LABELS.get(axis, axis)}: {a['you']} ({pct})")
+    L.append("\nThis stays on your machine. To add your own row to the public board, run "
+             "`haid submit` — it shows exactly what becomes public first.")
     return "\n".join(L)

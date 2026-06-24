@@ -120,7 +120,15 @@ class WindowDistribution:
         if s.cleanliness:
             out["cleanliness"] = {"percentile": round(s.cleanliness.percentile, 3)}
         if s.achievement:
-            out["achievement"] = round(s.achievement.achievement, 4)
+            a = s.achievement
+            out["achievement"] = round(a.achievement, 4)
+            # components kept so the benchmark row can show what drove achievement
+            out["achievement_components"] = {
+                "volume_loc": round(a.volume_loc, 2),
+                "volume_term": round(a.volume_term, 4),
+                "difficulty_D": round(a.difficulty_D, 4),
+                "cleanliness_C": round(a.cleanliness_C, 4),
+            }
         if s.value:
             out["value"] = (None if s.value.value != s.value.value      # nan → null
                             else round(s.value.value, 6))

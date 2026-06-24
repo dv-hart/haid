@@ -1,8 +1,9 @@
 # ADR-0005: Opt-in community benchmark (self-reported leaderboard)
 
-**Status:** Accepted (2026-06-05). v1 scope locked; the verified tier is explicitly
-deferred (see Consequences). Belongs to scoring/packaging (roadmap Phase 5); not
-needed for the MVP.
+**Status:** Accepted (2026-06-05); **amended 2026-06-23** when v1 was built — see
+[Amendment](#amendment-2026-06-23--v1-build). v1 scope locked; the verified tier is
+explicitly deferred (see Consequences). Belongs to scoring/packaging (roadmap Phase 5);
+not needed for the MVP.
 
 ## Context
 
@@ -116,6 +117,62 @@ held back until demand justifies a small backend.
 - **Low operational cost.** v1 is GitHub Pages + an Actions validator — no server,
   no secrets, no API budget. The expensive piece (v2 verified tier) is deferred
   behind real demand.
+
+## Amendment (2026-06-23) — v1 build
+
+Implementation choices made when `haid submit`/`haid rank` and the board infra were built.
+They refine the Decision; they do not change its posture (opt-in, default-off,
+self-reported, summary-only).
+
+1. **No local Ed25519 signature in v1.** The Decision specified a local Ed25519 key for
+   integrity + pseudonymous continuity. In practice **the authenticated GitHub PR author
+   already provides identity and continuity**, and the existing `content_hash` provides
+   integrity, so a separate key would be redundant — and Python-stdlib has no Ed25519
+   while the package is deliberately dependency-free. v1 therefore ships **without a
+   signature**: the validator cross-checks `payload.github_username == filename stem == PR
+   author login`. (An Ed25519 layer remains available as future hardening if non-PR
+   submission paths ever appear.) The payload no longer carries a `signature` field.
+
+2. **Overall score = total achievement ÷ total normalized tokens** over the window — a
+   throughput rate (total work done per token), robust to episode count. It is the ranked
+   column; the row also carries the components (volume LOC total, median difficulty rung,
+   median cleanliness percentile) and per-axis distribution stats. The board is bucketed
+   by **both** the anchor-ladder version hashes and the **combiner-config hash** (the
+   value.py knobs), as the Consequences require.
+
+3. **Distribution ships as package data.** The board snapshot
+   (`haid/data/benchmark_board.json`) is bundled with the package and read locally by
+   `haid report` (the "Community benchmark" context section) and `haid rank` — **zero
+   network on the default path**, consistent with the local-only default. `haid rank
+   --refresh` pulls the live Pages copy on demand.
+
+4. **The benchmark is a separate, data-only repo** (`dv-hart/haid-benchmark`), not a
+   directory in the package repo. It holds only entries + the generated board + the gating
+   workflows — **no application code and no release secrets** — so even a maintainer tricked
+   into merging a malicious PR there cannot reach the `haid` package or its PyPI publish.
+   This is a deliberate blast-radius bound (see the security discussion that prompted it).
+
+5. **The validate gate is split for token safety, and auto-merge is enabled.** Submission
+   PRs are gated by two workflows: `validate` runs on `pull_request` with a **read-only**
+   token (powerless against fork PRs by construction) and writes a verdict artifact;
+   `act` runs on `workflow_run` with the **write** token but **never checks out PR content**
+   and resolves the target PR from the run's head SHA (not the artifact), then auto-merges
+   on pass. `build` regenerates the board + Pages on merge. Actions are pinned to commit
+   SHAs; `main` requires the `validate` check via branch protection so a code change cannot
+   masquerade as a data submission. This supersedes the single `pull_request_target`
+   workflow first sketched, which put the write token in the same job as untrusted content.
+
+6. **The cross-repo board sync is whitelist-sanitized.** Refreshing the package's bundled
+   snapshot pulls only `board.json` (one HTTP GET, no checkout, no execution) and runs it
+   through `benchmark.sanitize_board`: every row must pass the leak guard and recompute its
+   `content_hash`, then is **projected onto a field whitelist** (known scalars only). The
+   re-serialized result is what ships. So the sync structurally **cannot carry anything but
+   current benchmark scalars** — not even if the benchmark repo were fully compromised.
+
+Data store and gates as built: one file per user at `entries/<username>.json` in the data
+repo (updates overwrite — one active entry per user); the shared gate logic lives in the
+package (`haid.report.benchmark.validate_entry` / `sanitize_board`) so the data repo's
+scripts, the sync, and the test-suite cannot drift from what `haid submit` produces.
 
 ## Related
 
