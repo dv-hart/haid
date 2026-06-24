@@ -36,7 +36,8 @@ haid = "haid.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-haid = ["data/*.json", "data/anchor_diffs/*.diff"]
+haid = ["data/*.json", "data/anchor_diffs/*.diff", "viz/assets/*.html",
+        "viz/assets/*.css", "viz/assets/*.js"]
 # data/benchmark_board.json (the community board snapshot `haid rank`/`haid report` read)
 # is covered by data/*.json above; refreshed by scripts/sync_board.py (sanitized) from the
 # data-only benchmark repo.
