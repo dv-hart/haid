@@ -47,7 +47,7 @@ WORK_TYPE_DEFS = {
     "meta": "About the session itself (run it, commit, configure) — not the codebase.",
 }
 
-# --- The per-message structured-output contract the host agent must satisfy --------------
+# --- The per-message label shape (one entry of the session array below) ------------------
 LABEL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -60,11 +60,33 @@ LABEL_SCHEMA = {
     "additionalProperties": False,
 }
 
-_PREAMBLE = (
-    "You are analyzing a Claude Code coaching transcript. Classify ONE user message on two "
-    "ORTHOGONAL axes and write a one-sentence purpose snapshot. Work from the conversation "
-    "so far (prior user messages + the agent's final text replies) — you are given that "
-    "context, not the whole transcript.")
+# --- The per-session structured-output contract the host agent must satisfy (R1) ----------
+# One agent labels a whole branch, returning an array — one entry per marked message, each
+# echoing its uuid so the labels fold back onto the right messages.
+SESSION_LABELS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "labels": {
+            "type": "array",
+            "description": "One entry per marked message, in the order they appear.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "uuid": {"type": "string",
+                             "description": "Copy the uuid from this message's CLASSIFY marker."},
+                    "move": {"type": "string", "enum": list(MOVES)},
+                    "work_type": {"type": "string", "enum": list(WORK_TYPES)},
+                    "purpose": {"type": "string",
+                                "description": "One sentence: the objective as of THIS message."},
+                },
+                "required": ["uuid", "move", "work_type", "purpose"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["labels"],
+    "additionalProperties": False,
+}
 
 _DISCIPLINE = (
     "Rules:\n"
@@ -84,17 +106,32 @@ def _enum_block(title: str, defs: dict) -> str:
     return "\n".join(lines)
 
 
-def build_message_prompt(message_text: str, context: str) -> str:
-    """The classification prompt for a single user message.
+_SESSION_PREAMBLE = (
+    "You are analyzing a Claude Code coaching transcript — ONE session branch, top to bottom, "
+    "in order. Some USER lines are marked '>>> CLASSIFY THIS MESSAGE — uuid: … <<<'. Classify "
+    "EACH marked message on two ORTHOGONAL axes and write a one-sentence purpose snapshot. "
+    "Unmarked lines are context only — do not emit labels for them.")
 
-    `context` is the bounded conversation skeleton before this message (messages.py). Output
-    is constrained to LABEL_SCHEMA by the host agent."""
+_SESSION_CAUSALITY = (
+    "Causality matters: judge each marked message by the conversation UP TO AND INCLUDING it "
+    "— its move is its relationship to the turn just before it. Do NOT use hindsight; a later "
+    "message must never change an earlier message's label. Return one label per marked "
+    "message, in the order they appear, each echoing its own uuid exactly.")
+
+
+def build_session_prompt(transcript: str, n_targets: int) -> str:
+    """The classification prompt for one whole session branch (R1).
+
+    `transcript` is the rendered branch with its target USER lines marked (messages.py). The
+    agent returns a `labels` array constrained to SESSION_LABELS_SCHEMA — one entry per mark."""
     return (
-        f"{_PREAMBLE}\n\n"
+        f"{_SESSION_PREAMBLE}\n\n"
         f"{_enum_block('AXIS A — conversational move', MOVE_DEFS)}\n\n"
         f"{_enum_block('AXIS B — work type', WORK_TYPE_DEFS)}\n\n"
         f"{_DISCIPLINE}\n\n"
-        f"--- conversation so far ---\n{context or '(this is the first message)'}\n\n"
-        f"--- the user message to classify ---\n{message_text}\n\n"
-        "Respond ONLY via structured output: move, work_type, purpose."
+        f"{_SESSION_CAUSALITY}\n\n"
+        f"--- the session branch ({n_targets} message(s) marked for classification) ---\n"
+        f"{transcript}\n\n"
+        "Respond ONLY via structured output: a `labels` array, one object per marked message "
+        "(uuid, move, work_type, purpose)."
     )

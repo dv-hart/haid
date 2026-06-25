@@ -13,6 +13,7 @@ the metrics consume. Stdlib only; no model.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -57,6 +58,10 @@ def for_project(project_path: str, days: int = 30, projects_root=None,
 
     Returns (view, sessions). History retention is generous (verified >38 days on real
     data), so 30 days is a safe default, not a retention limit."""
+    # The transcript dir is named after the ABSOLUTE cwd (discover.encode_project_path), so a
+    # relative `--project` like "." or "src" must be resolved first — otherwise we encode the
+    # literal "." and look under ~/.claude/projects/. and silently find zero sessions.
+    project_path = os.path.abspath(os.path.expanduser(project_path))
     now = now or datetime.now()
     since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     files = discover.find_sessions(project_path, projects_root=projects_root, since=since)

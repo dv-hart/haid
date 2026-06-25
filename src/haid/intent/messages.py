@@ -43,6 +43,23 @@ class UserMessage:
     context: str = ""             # bounded conversation skeleton BEFORE this message, on its branch
 
 
+@dataclass
+class SessionTagJob:
+    """One agent job: a whole session BRANCH's transcript + the user messages to label in it.
+
+    R1 (one agent per session branch): the agent reads the branch top-to-bottom ONCE and
+    labels every marked user message in order, so each message's causal context is simply the
+    transcript above it — no per-message context skeleton is re-embedded (that redundancy is
+    what made the per-message manifest balloon). Targets are deduped window-wide by uuid: a
+    shared planning prefix is a target in the FIRST branch that owns it (active is walked
+    first) and shown as plain context in the rest. The union of all jobs' `targets` is exactly
+    the set `extract_window_messages` produces — same branch walk, same uuid dedup."""
+    session_id: str
+    timeline: str                 # "active" or "rewind:<short-uuid>"
+    transcript: str               # rendered branch conversation, target messages marked
+    targets: list[str]            # uuids to label in THIS job, in transcript order
+
+
 def _sid(path: str) -> str:
     return Path(path).stem[:8]
 
@@ -108,3 +125,49 @@ def _render_skeleton(skeleton: list[tuple[str, str]]) -> str:
         else:
             lines.append(f"AGENT: {text}")
     return "\n".join(lines)
+
+
+# The inline marker the agent looks for: every marked USER line gets one label, echoing uuid.
+_TARGET_MARK = ">>> CLASSIFY THIS MESSAGE — uuid: {uuid} <<<"
+
+
+def extract_session_jobs(sessions) -> list[SessionTagJob]:
+    """Group the window into one job per session branch (active + each rewind).
+
+    Mirrors `extract_window_messages`' branch walk and uuid dedup exactly — sessions sorted by
+    first timestamp, `forest.timelines()` active-first, dedup by uuid — but emits a per-branch
+    transcript with its target user messages marked, instead of per-message bounded contexts.
+    A branch whose user messages were all already owned by an earlier branch yields no job."""
+    def first_ts(s):
+        ts = [r.timestamp for r in s.parse.records if r.timestamp]
+        return min(ts) if ts else ""
+
+    seen: set[str] = set()
+    jobs: list[SessionTagJob] = []
+
+    for s in sorted(sessions, key=first_ts):
+        sid = _sid(s.path)
+        fr = s.forest
+        for tl in fr.timelines():              # active first, then each rewind
+            lines = [f"— session {sid} ({tl.label}) —"]
+            targets: list[str] = []
+            for uuid in tl.node_uuids:          # root → leaf == chronological on this branch
+                r = fr.by_uuid.get(uuid)
+                if r is None:
+                    continue
+                if r.is_user_prompt():
+                    text = r.text().strip()
+                    if uuid not in seen:        # this branch owns it → mark it for labeling
+                        seen.add(uuid)
+                        targets.append(uuid)
+                        lines.append(f"USER: {text}  {_TARGET_MARK.format(uuid=uuid)}")
+                    else:                       # shared prefix, already owned → context only
+                        lines.append(f"USER: {text}")
+                elif r.type == "assistant":
+                    reply = r.text().strip()
+                    if reply:                    # final-text reply only (no thinking/tools)
+                        lines.append(f"AGENT: {_truncate(reply, _AGENT_REPLY_CAP)}")
+            if targets:
+                jobs.append(SessionTagJob(session_id=sid, timeline=tl.label,
+                                          transcript="\n".join(lines), targets=targets))
+    return jobs

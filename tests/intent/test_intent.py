@@ -199,6 +199,28 @@ def test_replay_missing_label_raises():
         pass
 
 
+# --- session-job grouping (R1) ----------------------------------------------------------
+def test_session_jobs_one_branch_marks_every_message():
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    jobs = msgmod.extract_session_jobs([s])
+    assert len(jobs) == 1                              # one branch → one agent job
+    j = jobs[0]
+    assert j.targets == ["u1", "u2"]                   # both messages labeled in this job
+    assert "uuid: u1 <<<" in j.transcript and "uuid: u2 <<<" in j.transcript
+    assert "AGENT: Done — wrote foo()." in j.transcript
+
+
+def test_session_jobs_rewind_splits_and_dedups_prefix():
+    s = FakeSession("/x/aaaaaaaa.jsonl", rewound_step_a_then_b())
+    jobs = msgmod.extract_session_jobs([s])
+    assert len(jobs) == 2                              # active + rewind branch
+    owned = [t for j in jobs for t in j.targets]
+    assert sorted(owned) == ["u0", "uA", "uB"]         # shared prefix u0 owned exactly once
+    rewind = next(j for j in jobs if j.timeline.startswith("rewind"))
+    assert "uA" in rewind.targets and "u0" not in rewind.targets
+    assert "do step A" in rewind.transcript and "draft a plan" in rewind.transcript  # u0 = context
+
+
 # --- HarnessBackend file handoff --------------------------------------------------------
 def test_harness_writes_manifest_and_raises(tmp_path):
     s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
@@ -207,11 +229,15 @@ def test_harness_writes_manifest_and_raises(tmp_path):
         intent.tag_window(None, [s], HarnessBackend(job_dir=job_dir))
         assert False, "expected PendingClassifications"
     except PendingClassifications as p:
-        assert p.n_jobs == 2
+        assert p.n_jobs == 1                          # one session branch
         manifest = json.load(open(p.manifest_path, encoding="utf-8"))
-    assert manifest["task"] == "classify_messages" and len(manifest["jobs"]) == 2
-    assert "AXIS A — conversational move" in manifest["jobs"][0]["prompt"]
-    assert manifest["schema"]["required"] == ["move", "work_type", "purpose"]
+    assert manifest["task"] == "classify_messages" and len(manifest["jobs"]) == 1
+    job = manifest["jobs"][0]
+    assert job["targets"] == ["u1", "u2"] and job["n_targets"] == 2
+    assert "AXIS A — conversational move" in job["prompt"]
+    assert manifest["schema"]["required"] == ["labels"]
+    assert manifest["schema"]["properties"]["labels"]["items"]["required"] == \
+        ["uuid", "move", "work_type", "purpose"]
 
 
 def test_harness_reads_back_labels(tmp_path):
@@ -224,6 +250,20 @@ def test_harness_reads_back_labels(tmp_path):
     ]}), encoding="utf-8")
     tagged = intent.tag_window(None, [s], HarnessBackend(job_dir=str(job_dir)))
     assert [t.move for t in tagged] == ["new_directive", "refinement"]
+
+
+def test_harness_reads_back_rejects_coverage_gap(tmp_path):
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    job_dir = tmp_path / "jobs"
+    job_dir.mkdir()
+    (job_dir / "tag.labels.json").write_text(json.dumps({"labels": [   # u2 missing
+        {"uuid": "u1", "move": "new_directive", "work_type": "implementation", "purpose": "p1"},
+    ]}), encoding="utf-8")
+    try:
+        intent.tag_window(None, [s], HarnessBackend(job_dir=str(job_dir)))
+        assert False, "expected a loud coverage error"
+    except ValueError as e:
+        assert "missing" in str(e)
 
 
 if __name__ == "__main__":

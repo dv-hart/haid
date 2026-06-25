@@ -35,7 +35,7 @@ stop — that's a bug. Read `prompt`, attach `schema`, spawn, collect. Nothing e
 
 ```
 haid metrics ─┐  (no model)                                ┌─► haid report ──► opus × 1 ──► final report
-haid tag ─────┤  haiku × ~1/user-message     labels        │
+haid tag ─────┤  haiku × 1/session-branch     labels       │
 haid episodes ┤  haiku × 1 (optional)        grouping   ───┼─► haid viz  (no model) ──► out/report/haid-viz.html
 haid score ───┤  haiku × ~9-11/episode/axis  verdicts      │
 haid why ─────┘  sonnet × top anchors        notes         └─► haid benchmark (opt-in only)
@@ -98,18 +98,35 @@ waste metrics — render with no `--json` for the readable view.
 haid tag --project P --days N --json --backend harness
 ```
 
-Exit 3 writes `out/jobs/tag.job.json`: `jobs[]` of `{uuid, session_id, prompt}` plus a
-`schema` with **enum-constrained** `move` and `work_type`. Spawn one **haiku** subagent
-per job on `prompt`, constrained to `schema`.
+Exit 3 writes `out/jobs/tag.job.json`: `jobs[]`, **one per session branch** (not per
+message), each `{session_id, timeline, n_targets, targets, prompt}`. Each `prompt` is that
+branch's whole transcript with its user messages marked `>>> CLASSIFY THIS MESSAGE — uuid: … <<<`;
+the agent reads the branch once and labels every marked message in order. The top-level
+`schema` is a `labels` **array** (one entry per mark: `{uuid, move, work_type, purpose}`,
+`move`/`work_type` enum-constrained).
 
-Write `out/jobs/tag.labels.json`:
-`{"labels": [{"uuid": ..., "move": ..., "work_type": ..., "purpose": ...}, ...]}`.
+Spawn **one haiku subagent per job** on `prompt`, constrained to `schema`, **no tools** (the
+transcript is inlined — there is nothing to fetch). Each returns a `labels` array covering
+that branch's marks. **Aggregate every job's array into one** `out/jobs/tag.labels.json`:
+`{"labels": [{"uuid": ..., "move": ..., "work_type": ..., "purpose": ...}, ...]}` — concatenate
+the per-job arrays as-is; the `uuid` each entry echoes is how they fold back, so no per-job
+bookkeeping is needed.
 
-**You are the schema enforcement.** The tag read-back path does not validate enums, so a
-label like `move: "question"` (a work-type, not a move) silently poisons everything
-downstream. Validate every label against the manifest's enums before writing the file.
-On a violation, retry that one job once with the enum list restated; if it violates
-again, spawn a fresh agent rather than arguing with the same one.
+**Two enforcement layers, and you own the second.** On re-run the read-back checks
+*coverage* — a missing or stray uuid fails loudly (`tag labels don't match the window`), so a
+job that got dropped or hallucinated can't slip through. But it does **not** check enum
+*values*: a label like `move: "question"` (a work-type, not a move) still poisons everything
+downstream. Use schema-constrained output so the enums hold at the source, and validate every
+label's `move`/`work_type` against the manifest enums before writing the file. On a violation,
+re-run that one **job** once with the enums restated; if it violates again, spawn a fresh
+agent rather than arguing with the same one.
+
+Why per-branch: one agent per message re-embedded each message's context, so the manifest grew
+quadratically (the ~800KB-too-big-to-relay failure). Per-branch shows each transcript once →
+the manifest is linear in transcript size, the agent count drops to ~one-per-session, and each
+message's causal context is just the transcript above it. Causality is preserved by
+instruction (judge each mark by what precedes it, no hindsight); branches are split so a
+rewound stretch is still labeled and never bleeds into the active branch.
 
 Re-run with `--json` and save stdout → `out/report/tags.json`. Keep `tag.labels.json`
 too — `score` (and `episodes`) consume it via `--labels`.

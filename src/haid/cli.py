@@ -258,9 +258,10 @@ def _cmd_tag(args) -> int:
     try:
         tagged = intent.tag_window(view_, sessions, backend)
     except intent.PendingClassifications as p:
-        print(f"{p.n_jobs} messages to classify.\n"
-              f"Run a subagent per job in: {p.manifest_path}\n"
-              f"Write labels to:  {args.job_dir}/tag.labels.json "
+        print(f"{p.n_jobs} classification job(s) — one haiku subagent per session branch.\n"
+              f"Each job in {p.manifest_path} carries a branch transcript; the agent returns a "
+              "`labels` array (one entry per marked message, echoing its uuid).\n"
+              f"Aggregate every job's labels into:  {args.job_dir}/tag.labels.json "
               '({"labels": [{"uuid":…, "move":…, "work_type":…, "purpose":…}, …]}),'
               " then re-run.")
         return 3

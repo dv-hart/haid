@@ -22,29 +22,25 @@ from __future__ import annotations
 import json
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Callable
 
 from . import taxonomy
+from .messages import SessionTagJob, UserMessage
 
 # A label is the validated structured output for one message.
 Label = dict      # {"move","work_type","purpose"}
 _LABEL_KEYS = ("move", "work_type", "purpose")
 
 
-@dataclass(frozen=True)
-class ClassifyItem:
-    """One message to classify. `uuid` lets ReplayBackend look up a saved label; the live
-    backend uses `prompt` (built from the message + its context + priors)."""
-    uuid: str
-    session_id: str
-    prompt: str
-
-
 class ClassifierBackend(ABC):
     @abstractmethod
-    def classify_batch(self, items: list[ClassifyItem]) -> list[Label]:
-        """Return one Label per item, in the same order."""
+    def classify_messages(self, session_jobs: list[SessionTagJob],
+                          messages: list[UserMessage]) -> dict[str, Label]:
+        """Return {uuid: Label} covering every message.
+
+        `session_jobs` carry the per-branch transcripts the live backend hands to agents;
+        `messages` is the canonical deduped/ordered list (ReplayBackend reads its uuids; the
+        HarnessBackend uses it to check that the labels cover the window exactly)."""
         raise NotImplementedError
 
 
@@ -67,12 +63,12 @@ class ReplayBackend(ClassifierBackend):
                 labels[r["uuid"]] = {k: r[k] for k in _LABEL_KEYS}
         return cls(labels)
 
-    def classify_batch(self, items: list[ClassifyItem]) -> list[Label]:
-        out: list[Label] = []
-        for it in items:
-            if it.uuid not in self._labels:
-                raise KeyError(f"no saved label for message {it.uuid}")
-            out.append(self._labels[it.uuid])
+    def classify_messages(self, session_jobs, messages) -> dict[str, Label]:
+        out: dict[str, Label] = {}
+        for m in messages:
+            if m.uuid not in self._labels:
+                raise KeyError(f"no saved label for message {m.uuid}")
+            out[m.uuid] = self._labels[m.uuid]
         return out
 
 
@@ -83,19 +79,19 @@ class PendingClassifications(Exception):
     Carries the manifest path the skill should run subagents over, then re-invoke."""
 
     def __init__(self, manifest_path: str, n_jobs: int):
-        super().__init__(f"{n_jobs} messages to classify — run subagents over "
-                         f"{manifest_path}, write labels, then re-run")
+        super().__init__(f"{n_jobs} classification job(s) (one per session branch) — run "
+                         f"subagents over {manifest_path}, write labels, then re-run")
         self.manifest_path = manifest_path
         self.n_jobs = n_jobs
 
 
-# A runner: given the manifest it returns one label dict per job, in order. Injected by the
-# skill (absent in pure Python).
+# A runner: given the manifest it returns a flat list of label rows (each with its uuid).
+# Injected by the skill (absent in pure Python).
 Runner = Callable[[dict], list[Label]]
 
 
 class HarnessBackend(ClassifierBackend):
-    """Delegate classification to the host agent.
+    """Delegate classification to the host agent — one agent per session branch (R1).
 
       - runner injected → call it synchronously.
       - no runner → file handoff: write the manifest; if a labels file already sits beside
@@ -107,18 +103,21 @@ class HarnessBackend(ClassifierBackend):
         self.runner = runner
         self.job_name = job_name
 
-    def _manifest(self, items: list[ClassifyItem]) -> dict:
+    def _manifest(self, session_jobs: list[SessionTagJob]) -> dict:
         return {
             "task": "classify_messages",
-            "schema": taxonomy.LABEL_SCHEMA,
-            "jobs": [{"uuid": it.uuid, "session_id": it.session_id, "prompt": it.prompt}
-                     for it in items],
+            "schema": taxonomy.SESSION_LABELS_SCHEMA,
+            "jobs": [{"session_id": j.session_id, "timeline": j.timeline,
+                      "n_targets": len(j.targets), "targets": list(j.targets),
+                      "prompt": taxonomy.build_session_prompt(j.transcript, len(j.targets))}
+                     for j in session_jobs],
         }
 
-    def classify_batch(self, items: list[ClassifyItem]) -> list[Label]:
-        manifest = self._manifest(items)
+    def classify_messages(self, session_jobs, messages) -> dict[str, Label]:
+        manifest = self._manifest(session_jobs)
+        expected = {m.uuid for m in messages}
         if self.runner is not None:
-            return list(self.runner(manifest))
+            return self._collect(self.runner(manifest), expected)
 
         os.makedirs(self.job_dir, exist_ok=True)
         mpath = os.path.join(self.job_dir, f"{self.job_name}.job.json")
@@ -126,7 +125,21 @@ class HarnessBackend(ClassifierBackend):
         if os.path.exists(lpath):
             data = json.load(open(lpath, encoding="utf-8"))
             rows = data["labels"] if isinstance(data, dict) and "labels" in data else data
-            by_uuid = {r["uuid"]: r for r in rows}
-            return [{k: by_uuid[it.uuid][k] for k in _LABEL_KEYS} for it in items]
+            return self._collect(rows, expected)
         json.dump(manifest, open(mpath, "w", encoding="utf-8"), indent=1)
-        raise PendingClassifications(mpath, len(items))
+        raise PendingClassifications(mpath, len(manifest["jobs"]))
+
+    @staticmethod
+    def _collect(rows, expected: set[str]) -> dict[str, Label]:
+        """Fold the agents' label rows into {uuid: Label}, failing loudly on any coverage gap
+        — a missing or stray uuid means a session job wasn't answered (or was mis-answered)
+        and would silently poison everything downstream."""
+        by_uuid = {r["uuid"]: {k: r[k] for k in _LABEL_KEYS} for r in rows}
+        missing = expected - set(by_uuid)
+        extra = set(by_uuid) - expected
+        if missing or extra:
+            raise ValueError(
+                f"tag labels don't match the window: {len(missing)} missing, "
+                f"{len(extra)} unexpected uuid(s). Re-run the affected session job(s) and "
+                "rewrite tag.labels.json so every marked message is labeled exactly once.")
+        return {u: by_uuid[u] for u in expected}

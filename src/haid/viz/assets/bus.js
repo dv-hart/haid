@@ -169,7 +169,7 @@ function render() {
   const gf = globalFiles(data);
   const busW = C.inputBus.w, maxFit = Math.max(6, Math.floor(busW / 7));
   const NCOLOR = Math.min(STATE.laneCap, maxFit);
-  const FAN = 4, OVER = "#9aa0a6";
+  const FAN = 4, OVER = "#9aa0a6", COARSE_TAP_CAP = 3;
 
   // coarse = context (whole session/episode/window) → always ONE grey bundle, never eats a colour slot.
   // fine = focus (exchange/group/leaf) → competes for the 5 colour lanes.
@@ -191,7 +191,7 @@ function render() {
   // overflow files get extra lanes after the ranked ones; everything else shares the grey
   // overflow lane (always the LAST slot, per side — sides can differ when pins differ).
   const rowEmits = geo.map(r => { const e = emit(r.node); return e ? { r, ...e } : null; });
-  const sideTok = sel => { const m = {}; rowEmits.forEach(re => re && re.fine && re[sel].forEach(c => { if (c.fid) m[c.fid] = (m[c.fid] || 0) + c.tok; })); return m; };
+  const sideTok = (sel, fineOnly) => { const m = {}; rowEmits.forEach(re => re && (re.fine || !fineOnly) && re[sel].forEach(c => { if (c.fid) m[c.fid] = (m[c.fid] || 0) + c.tok; })); return m; };
   const rankSlot = (m, pins) => {
     const slots = {};
     Object.entries(m).sort((a, b) => b[1] - a[1]).forEach(([f], i) => { if (i < NCOLOR) slots[f] = i; });
@@ -201,7 +201,15 @@ function render() {
     for (const f in m) if (slots[f] == null) slots[f] = OV;
     return { slots, OV, K: OV + 1 };
   };
-  const inTokMap = sideTok("inn"), outTokMap = sideTok("out");
+  // Rank fine (focus) files for the colour slots. When NOTHING fine is in view — the default
+  // collapsed overview, every visible row a coarse session — fall back to ranking the coarse
+  // aggregates so the window's top files still get colour lanes instead of one grey blob. The
+  // fallback is gated on `coarseColour` below: as soon as anything fine is open (solo, exchanges),
+  // fine wins the slots and coarse siblings stay grey — the original "don't let a collapsed sibling
+  // outrank the focused session's leaf reads" guarantee is preserved.
+  const anyFine = rowEmits.some(re => re && re.fine && (re.inn.length || re.out.length));
+  const coarseColour = !anyFine;
+  const inTokMap = sideTok("inn", anyFine), outTokMap = sideTok("out", anyFine);
   const SIDE = { in: rankSlot(inTokMap, [...STATE.pins.in]), out: rankSlot(outTokMap, [...STATE.pins.out]) };
   const slotInMap = SIDE.in.slots, slotOutMap = SIDE.out.slots;
   const spc = { in: busW / SIDE.in.K, out: busW / SIDE.out.K };
@@ -226,8 +234,9 @@ function render() {
     const doSide = (list, side, x0) => {
       const lxOf = slot => side === "in" ? xInLane(slot) : xOutLane(slot);
       const OV = SIDE[side].OV;
-      // coarse context node → a single grey bundle for the whole thing
-      if (!re.fine) {
+      // coarse context node → a single grey bundle for the whole thing, UNLESS this is the all-coarse
+      // overview (coarseColour): then it splits like a fine row so the top files show as colour.
+      if (!re.fine && !coarseColour) {
         const sum = list.reduce((s, e) => s + e.tok, 0), sorted = [...list].sort((a, b) => b.tok - a.tok);
         list.forEach(c => overflowTok[side][c.fid] = (overflowTok[side][c.fid] || 0) + c.tok);
         taps.push({ x0, lx: lxOf(OV), y: r.cy, color: OVER, tok: sum, lk: side + OV, side, count: list.length, title: bundleTitle(sorted, `${list.length} file${list.length > 1 ? "s" : ""} (${fmtTok(sum)}t):`), row: r.i, cyRow: r.cy });
@@ -237,7 +246,12 @@ function render() {
       const slotMap = side === "in" ? slotInMap : slotOutMap;
       const colour = [], others = [];
       list.forEach(c => { const slot = slotMap[c.fid]; (slot != null && slot !== OV) ? colour.push({ ...c, slot }) : others.push(c); });
-      const items = colour.sort((a, b) => a.slot - b.slot).map(c => ({
+      colour.sort((a, b) => a.slot - b.slot);
+      // A coarse overview row caps its colour taps at the top few (by global rank = lowest slot); the
+      // rest fold into the grey bundle. Without this a 25-file session would stack ~10 fat teeth on one
+      // 24px row. Fine rows (leaf/exchange) touch few files already → no cap.
+      if (!re.fine && colour.length > COARSE_TAP_CAP) others.push(...colour.splice(COARSE_TAP_CAP));
+      const items = colour.map(c => ({
         slot: c.slot, color: gf.by[c.fid].color, tok: c.tok, title: `${gf.by[c.fid].name} · ${fmtTok(c.tok)}t`, name: gf.by[c.fid].name,
       }));
       if (others.length) {
@@ -294,8 +308,14 @@ function render() {
   taps.forEach(t => (byLane[t.lk] = byLane[t.lk] || []).push(t));
   const laneT = {}; for (const k in byLane) laneT[k] = byLane[k].reduce((s, t) => s + t.tok, 0);
   // same token count → same width in every view (cross-session comparable), log to span the range;
-  // clamped to the lane spacing so lanes can't overlap.
-  const REF_MINTOK = 50, REF_MAXTOK = 200000, REF_MAXW = 14;   // ~context-window at the fat end
+  // clamped to the lane spacing so lanes can't overlap. Anchored to the ACTUAL per-lane token range:
+  // real sessions top a lane out around ~12-14k tok (per-file in+out), NOT the 200k context window.
+  // Scale is biased toward the BIG lanes (the signal): REF_MAXW≈the lane-spacing cap so the curve
+  // reaches full width only near the real max (~14k) instead of clamping at ~3k — the 3k..12k band
+  // now fans out (3k≈7px, 5k≈8.5, 8k≈9.6, 12k≈cap) instead of all pinning to one fat width. The
+  // price is the small end compresses to hairlines (sub-250 tok ≈ 1.2px), which is intended — those
+  // reads are noise. 1k vs 3k still ≈2.7px apart.
+  const REF_MINTOK = 250, REF_MAXTOK = 14000, REF_MAXW = 11;
   const lo = Math.log(REF_MINTOK), hi = Math.log(REF_MAXTOK), capW = Math.min(spc.in, spc.out) * 0.72;
   const busWidth = T => Math.min(capW, 1.2 + (REF_MAXW - 1.2) * Math.max(0, Math.min(1, (Math.log(Math.max(1, T)) - lo) / (hi - lo))));
   // Teeth must sum to EXACTLY W (flow conservation) or the trunk taper goes non-monotone.

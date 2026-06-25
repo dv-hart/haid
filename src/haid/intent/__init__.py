@@ -20,13 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import taxonomy
-from .classify import (ClassifierBackend, ClassifyItem, HarnessBackend,
+from .classify import (ClassifierBackend, HarnessBackend,
                        PendingClassifications, ReplayBackend)
-from .messages import UserMessage, extract_window_messages
+from .messages import (SessionTagJob, UserMessage, extract_session_jobs,
+                       extract_window_messages)
 
 __all__ = ["TaggedMessage", "tag_window", "to_json", "render",
            "ClassifierBackend", "ReplayBackend", "HarnessBackend",
-           "PendingClassifications", "ClassifyItem", "UserMessage"]
+           "PendingClassifications", "SessionTagJob", "UserMessage"]
 
 
 @dataclass
@@ -44,19 +45,20 @@ class TaggedMessage:
 
 def tag_window(view, sessions, backend: ClassifierBackend) -> list[TaggedMessage]:
     """Tag every user message in the window, across all branches. `view` is accepted for
-    symmetry with the metrics API (and future episode use); messages come from `sessions`."""
-    messages = extract_window_messages(sessions)
+    symmetry with the metrics API (and future episode use); messages come from `sessions`.
 
-    items = [ClassifyItem(uuid=m.uuid, session_id=m.session_id,
-                          prompt=taxonomy.build_message_prompt(m.text, m.context))
-             for m in messages]
-    labels = backend.classify_batch(items)
+    R1: the live backend labels a whole session branch per agent (`session_jobs`); `messages`
+    stays the canonical deduped/ordered list we fold the labels back onto (by uuid)."""
+    session_jobs = extract_session_jobs(sessions)
+    messages = extract_window_messages(sessions)
+    labels = backend.classify_messages(session_jobs, messages)
 
     return [TaggedMessage(
                 uuid=m.uuid, session_id=m.session_id, timeline=m.timeline, ts=m.ts,
                 index=m.index, text=m.text,
-                move=lab["move"], work_type=lab["work_type"], purpose=lab["purpose"])
-            for m, lab in zip(messages, labels)]
+                move=labels[m.uuid]["move"], work_type=labels[m.uuid]["work_type"],
+                purpose=labels[m.uuid]["purpose"])
+            for m in messages]
 
 
 def to_json(tagged: list[TaggedMessage], label: str = "") -> dict:

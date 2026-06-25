@@ -32,10 +32,23 @@ timeline; the expensive analysis (step 3) then reads that small timeline and
 spends its attention only on the hotspots it points to. Classification is the
 entry point to that triage.
 
-**Method: work from the last user message upward.** To understand message *n*, read
-the prior user messages and the cheap agent text/summary blocks — not the whole
-transcript. Corrections are ground truth, so anchoring on user messages keeps the
-pass trustworthy.
+**Method: judge each message by what precedes it.** A message's move is its relationship
+to the turn just before it, so corrections — ground truth for misalignment — are read
+against the prior agent action, not in hindsight.
+
+**Orchestration (R1, 2026-06-24): one agent per session branch.** The cheap pass batches by
+*branch*: one haiku agent reads a whole branch transcript once and labels every user message
+on it in order, instead of one agent per message each re-embedding its own context. This is
+what makes the pass cheap and the manifest relayable — per-message jobs re-embedded
+overlapping context and grew quadratically (an ~800KB manifest too large to fan out); the
+per-branch transcript is shown once, so cost is linear and the agent count is ~one per
+session. The branch walk and uuid dedup are unchanged (every rewound branch still gets its
+own job; a shared prefix is labeled once, shown as context elsewhere), so abandoned work is
+still labeled and never bleeds across branches. **Trade-off, stated honestly:** a one-shot
+branch agent *can* see messages after *n* when labeling *n*, so causality is preserved by
+**instruction** ("no hindsight"), not by construction as the old per-message bounded context
+enforced it. Whether that lookahead measurably shifts labels (esp. correction-vs-refinement)
+is the open validation question this orchestration trades for the cost win.
 
 ## Two orthogonal axes (do not collapse them)
 
