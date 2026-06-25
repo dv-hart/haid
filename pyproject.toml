@@ -24,6 +24,10 @@ classifiers = [
 ]
 dependencies = []  # stdlib only — model judgment is delegated to the host agent (see scoring/compare.py)
 
+# Tooling for contributors + CI (NOT runtime deps — the package stays stdlib-only).
+[project.optional-dependencies]
+dev = ["pytest>=7", "build", "twine", "pre-commit"]
+
 [project.urls]
 Homepage = "https://github.com/dv-hart/haid"
 Repository = "https://github.com/dv-hart/haid"
