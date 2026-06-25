@@ -17,6 +17,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: Check version consistency
+        # The version is declared in 4 files (pyproject, __init__, plugin.json,
+        # marketplace.json). Fail the release if they disagree, or — on a tag push —
+        # if any of them doesn't equal the tag (e.g. v0.0.5 -> 0.0.5).
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python scripts/check_versions.py --expect "${GITHUB_REF_NAME#v}"
+          else
+            python scripts/check_versions.py
+          fi
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade build
