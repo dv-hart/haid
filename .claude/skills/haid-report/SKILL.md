@@ -226,20 +226,43 @@ re-rank, soften, or add remedies of your own — the hedges and caveats are load
 trust discipline. Cheap path: `--digest-only` skips the model entirely; offer it when the
 user wants a zero-cost or fully-deterministic answer.
 
-**Close every report by pointing the user to the four things they'll want next** (the
-render already includes a "Scoreboard" block and a "Where to look" footer — reinforce them
-in your wrap-up, don't bury them):
+**Lead your wrap-up with the result, stated as a number — don't bury it in prose.** The
+render computes the score and the percentile for you; your job is to *say them out loud*,
+not paraphrase around them. The very first line of your wrap-up must quote, verbatim from
+the rendered blocks:
+- **the window score** — the `value` figure from the Scoreboard (`window score: X value`),
+  not just the achievement total or difficulty rung; and
+- **the percentile** — the percentile of that score against the community board. Note the
+  **bundled** board snapshot ships empty, so the report's own "Community benchmark" block is
+  the seed-bucket fallback and will *not* carry a percentile. To get a real one, run the
+  read-only `haid rank --scores out/report/scores.json --refresh` (pulls the live board from
+  Pages, uploads nothing) and quote its `percentile`. State it as "**you scored X, which puts
+  you in the Nth percentile** of N comparable entries." If `rank` reports no comparable peers
+  yet (seed bucket) or the live board can't be reached, say exactly that — there is no
+  percentile to quote, and submitting would seed the bucket — rather than inventing one.
+- **then ask, explicitly, whether they want to submit** — a plain opt-in question
+  ("Want me to submit this to the community board?"), never an implication that submission
+  is expected. Do not submit until the user says yes.
+
+A wrap-up that names the achievement total and difficulty rung but not the `value` score
+and percentile, or that mentions the leaderboard without asking, is the bug this section
+exists to prevent. If scores are absent (empty diff / `--digest-only`), say there's no
+score this run and skip the percentile/submit line.
+
+**Then point the user to the four things they'll want next** (the render already includes a
+"Scoreboard" block and a "Where to look" footer — reinforce them, don't bury them):
 1. **The report** — saved under `out/report/` (the rendered narrative + the JSON inputs).
 2. **The window score** — the single `value` figure (Σ achievement / Σ normalized tokens
    across scored episodes) plus the difficulty ceiling, shown in the Scoreboard. This is
-   the number to track run-over-run.
+   the number to track run-over-run — and the number you led with above.
 3. **The visualization** — generate it from the live window with `haid viz` (step 6b) and
    point the user at the self-contained `out/report/haid-viz.html` (opens in any browser,
    no server). It reflects THIS run: real episode grouping + per-episode score badges.
-4. **The leaderboard** — submitting is **opt-in and explicit** (step 7). Mention it exists
-   and that the window score is what it ranks; never submit or imply submission is
-   expected. The report already shows where the user lands (the "Community benchmark"
-   block); the opt-in `haid submit` opens the PR.
+4. **The leaderboard** — submitting is **opt-in and explicit** (step 7). You already asked
+   above; here just remind them the window score is what it ranks and that `haid submit`
+   shows the exact public row before pushing. Never submit or imply submission is expected.
+   `haid rank --refresh` (read-only) is where the live percentile you quoted came from; the
+   report's own "Community benchmark" block is the offline seed-bucket fallback.
 
 ### 6b. Visualize — render the window (deterministic, no model)
 
