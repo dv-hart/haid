@@ -1,0 +1,16 @@
+# Normalize all text files to LF in the repo AND on checkout, on every OS. This keeps
+# built artifacts and content hashes byte-identical regardless of a contributor's git
+# config (core.autocrlf) — the CRLF-vs-LF drift that broke ladder_versions hashing can't
+# recur. Run `git add --renormalize .` once after changing this file.
+* text=auto eol=lf
+
+# Explicitly binary — never normalize these.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.whl  binary
+*.gz   binary
+*.zip  binary
