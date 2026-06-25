@@ -8,7 +8,7 @@
       "name": "haid",
       "source": "./",
       "description": "Run HAID's self-audit pipeline over your recent Claude Code sessions and present the coaching report (metrics → tag → episodes → score → why → report). A SessionStart hook checks for the haid CLI and prints an install hint if it's missing.",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "license": "MIT",
       "keywords": ["claude-code", "self-audit", "coaching", "telemetry"]
     }

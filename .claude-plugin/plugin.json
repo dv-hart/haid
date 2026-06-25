@@ -1,7 +1,7 @@
 {
   "name": "haid",
   "displayName": "HAID — How Am I Doing",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Self-audit & coaching reports for your Claude Code sessions. Drives the haid CLI's tag→episodes→score→why→report pipeline via subagents and presents the coaching report.",
   "author": { "name": "dv-hart", "email": "jhart@datavine.us" },
   "homepage": "https://github.com/dv-hart/haid",
