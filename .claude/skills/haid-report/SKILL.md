@@ -106,8 +106,10 @@ the agent reads the branch once and labels every marked message in order. The to
 `move`/`work_type` enum-constrained).
 
 Spawn **one haiku subagent per job** on `prompt`, constrained to `schema`, **no tools** (the
-transcript is inlined — there is nothing to fetch). Each returns a `labels` array covering
-that branch's marks. **Aggregate every job's array into one** `out/jobs/tag.labels.json`:
+transcript is inlined — there is nothing to fetch). Use a **direct `Agent` call per job** with
+the `prompt` passed verbatim as the agent prompt — **do not wrap the fan-out in a `Workflow`**
+and **do not pass file paths** for the agent to `Read`; the `prompt` already is the whole
+transcript. Each returns a `labels` array covering that branch's marks. **Aggregate every job's array into one** `out/jobs/tag.labels.json`:
 `{"labels": [{"uuid": ..., "move": ..., "work_type": ..., "purpose": ...}, ...]}` — concatenate
 the per-job arrays as-is; the `uuid` each entry echoes is how they fold back, so no per-job
 bookkeeping is needed.
@@ -160,12 +162,36 @@ Exit 3 writes one manifest **per episode per axis**:
 `out/jobs/<episode>_<axis>.job.json`. Each contains `comparisons[]` (one fully-built
 pairwise prompt each), a `schema` for the verdict, and a `fingerprint`.
 
-For each manifest, spawn one **haiku** judge per `comparisons[i].prompt`, constrained to
-`schema` and given **no tools** (the diffs are inlined — a judge that reads files is
-misconfigured); collect each judge's `winner` (`"A"`, `"B"`, or `"tie"`). Write
-`out/jobs/<episode>_<axis>.verdicts.json`:
-`{"fingerprint": <copied from the manifest>, "winners": ["A", "B", "tie", ...]}` —
-**in comparison order**, one winner per comparison, nothing else.
+This is the **one heavy fan-out** in the chain (~28 manifests × ~10 comparisons ≈ 280
+judges, each prompt carrying two inlined diffs). Don't inline 280 big prompts into your
+context or marshal them through args — both blow up. Use the committed, deterministic
+pipeline instead; you **author nothing**:
+
+1. **Split mechanically** (keeps every diff out of your context). Capture stdout with the
+   Bash tool (UTF-8, no BOM — see the redirection gotcha):
+   ```
+   python .claude/skills/haid-report/scripts/split_score_manifests.py --job-dir out/jobs
+   ```
+   It writes one prompt file per comparison under `out/jobs/score_split/` and prints the
+   tiny `args` object: `{"base": ..., "manifests": [{manifest, n, fingerprint}, ...]}`.
+2. **Fan out with the committed workflow** — pass that object straight through (as a JSON
+   value, not a string; the script normalizes either way):
+   ```
+   Workflow({ scriptPath: ".claude/workflows/haid-judge.js", args: <the splitter's object> })
+   ```
+   It spawns **one independent haiku judge per comparison** (reads exactly its one file, no
+   other), and returns `[{manifest, fingerprint, winners, complete}]` with `winners` in
+   comparison order.
+3. **Write verdicts** for each returned group where `complete` is `true`:
+   `out/jobs/<manifest>.verdicts.json` = `{"fingerprint": <from the group>, "winners":
+   [...]}` — nothing else. A group with `complete: false` had a judge die (null winner) —
+   re-run the workflow before writing; **never** write a null or short `winners` list.
+
+Why a workflow *here* and direct `Agent` calls everywhere else: score is the only step
+heavy enough that keeping the prompts on disk (judges `Read` one file) beats inlining. The
+judge still sees exactly one comparison and nothing else, so the calibrated counterbalancing
+and per-verdict isolation are preserved — it is **not** a license to read files in any other
+step.
 
 Notes that matter here:
 - Which side is the subject is deliberately hidden (deterministic counterbalancing baked
@@ -312,18 +338,25 @@ haid submit --scores out/report/scores.json --github-user USER --project NAME [-
 
 Get this right or runs come back inconsistent and over-budget:
 
-- **Tool-FREE judgment** — `tag`, `episodes`, `score`, `compose`. The prompt already
-  carries everything the agent needs (diffs, message text, the whole digest are inlined).
-  The agent's only legal action is to emit one structured-output object. Spawn these with
-  **no tools** (schema-constrained output only). A judge that reads a file, greps the
-  repo, or re-fetches a diff is misconfigured — there is nothing to fetch, and every such
+- **Tool-FREE judgment** — `tag`, `episodes`, `compose`. The prompt already carries
+  everything the agent needs (message text, the whole digest are inlined). The agent's only
+  legal action is to emit one structured-output object. Spawn these with **no tools**
+  (schema-constrained output only) via direct `Agent` calls. A judge that reads a file, greps
+  the repo, or re-fetches a diff is misconfigured — there is nothing to fetch, and every such
   tool turn is pure waste. One job → one structured answer, full stop.
+- **Tool-free judgment, file-delivered** — `score` **only**. The verdict is logically
+  tool-free (the pairwise comparison is fully self-contained), but at ~280 large prompts the
+  whole batch can't live in your context or in `args`. So the splitter puts each comparison in
+  its own file and the `haid-judge` workflow's judges take **exactly one `Read`** — of their
+  own comparison file — then emit one structured verdict. One Read, one answer; reading any
+  second file (or the repo) is the same misconfiguration as above. See step 4.
 - **Tool-USING investigation** — `why` **only**. These agents are *supposed* to spend
   multiple tool turns reading transcripts and the repo (Read/Grep/Glob). This is the one
   boundary where 1–4 minutes and many tool calls per agent is correct.
 
-If a ranking or judging agent took multiple tool uses, it was spawned with tools it
-should not have had. Constrain the surface, not just the output schema.
+If a ranking or judging agent took more than its allotted tool use (zero for tag/episodes/
+compose, one Read for score), it was spawned with tools it should not have had. Constrain the
+surface, not just the output schema.
 
 ## Runner rules (every boundary)
 
@@ -340,6 +373,17 @@ should not have had. Constrain the surface, not just the output schema.
   Extract the last complete JSON object from the reply before validating.
 - **Parallel by default**: jobs within a manifest, and manifests within a step, are
   independent. Batch tool-using why-agents in smaller groups (~4) since each is heavy.
+- **Fan out with direct `Agent` calls — and never hand-author a `Workflow`.** Every step
+  except score fans out with direct parallel `Agent` calls: one subagent per job, its `prompt`
+  verbatim with its `schema`, no tools for tool-free boundaries, and never a file path for the
+  agent to `Read` (the transcript/diff is already inlined). **Score is the one exception** — it
+  invokes the *committed* `haid-judge` workflow (`.claude/workflows/haid-judge.js`); invoke it,
+  don't rewrite it. Do **not** author a one-off `Workflow` for any step: a model-authored
+  script receives `args` verbatim and routinely marshals nested data as a JSON *string*, so
+  `jobs.map(...)` throws `jobs.map is not a function` (the real tag-step failure). The committed
+  workflow already carries the normalization shim
+  (`const x = typeof args === 'string' ? JSON.parse(args) : args`); a prose instruction to
+  "pass raw JSON" is not a guarantee, the shim is.
 - **Don't recompute, don't improvise**: never answer a manifest job yourself in-line as
   the orchestrator — your context is contaminated with the whole window. Fresh subagents
   only. Never fabricate or pad an answers file to make a re-run pass; loud failures are
