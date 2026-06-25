@@ -35,10 +35,16 @@ _FORBIDDEN_SUBSTR = ("path",)
 
 
 def ladder_versions() -> dict:
-    """Hash of each shipped anchor ladder — placements are only comparable per-version."""
+    """Hash of each shipped anchor ladder — placements are only comparable per-version.
+
+    Line endings are normalized to LF before hashing so the version is identical across OS
+    checkouts: a CRLF working tree (Windows) must hash the same as the LF artifact the gate
+    installs, or that submitter is falsely rejected as 'stale'. (combiner_config_hash is
+    already content-canonical; this gives the ladder hashes the same property.)"""
     out = {}
     for axis in ("difficulty", "cleanliness"):
         raw = resources.files("haid.data").joinpath(f"{axis}_anchors.json").read_bytes()
+        raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         out[axis] = hashlib.sha256(raw).hexdigest()[:16]
     return out
 

@@ -1,0 +1,55 @@
+name: benchmark-pin
+
+# Guard the cross-repo comparability pin (ADR-0005): the haid version the benchmark repo's
+# gate pins must stay hash-compatible with what `haid submit` produces here, or legitimate
+# submissions get rejected as "stale". Runs on changes to the version-defining files, plus
+# weekly to catch drift introduced by a change on the benchmark-repo side.
+#
+# Three checks, cheapest first (see scripts/check_benchmark_pin.py):
+#   local   — lockfile hashes == this checkout's live hashes
+#   remote  — the benchmark repo's two workflows pin exactly the locked version
+#   compat  — that pinned release, installed clean, computes the SAME hashes as the lockfile
+
+on:
+  pull_request:
+    paths:
+      - "src/haid/data/difficulty_anchors.json"
+      - "src/haid/data/cleanliness_anchors.json"
+      - "src/haid/scoring/value.py"
+      - "scripts/benchmark_pin.json"
+      - "scripts/check_benchmark_pin.py"
+      - ".github/workflows/benchmark-pin.yml"
+  schedule:
+    - cron: "0 6 * * 1"          # weekly, Monday 06:00 UTC (before sync-board at 07:00)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.x"
+      - run: pip install -e .
+
+      - name: local + remote pin check
+        run: PYTHONPATH=src python scripts/check_benchmark_pin.py
+
+      - name: compat — the pinned release computes the same hashes
+        run: |
+          set -euo pipefail
+          pin=$(python -c "import json;print(json.load(open('scripts/benchmark_pin.json'))['pinned_haid_version'])")
+          want=$(python -c "import json;d=json.load(open('scripts/benchmark_pin.json'));print(json.dumps({'l':d['ladder_versions'],'c':d['combiner_config_hash']},sort_keys=True))")
+          python -m venv /tmp/pinenv
+          /tmp/pinenv/bin/pip install --quiet "haid==${pin}"
+          got=$(/tmp/pinenv/bin/python -c "import json;from haid.report import benchmark as b;print(json.dumps({'l':b.ladder_versions(),'c':b.combiner_config_hash()},sort_keys=True))")
+          echo "lockfile: $want"
+          echo "haid==$pin: $got"
+          if [ "$want" != "$got" ]; then
+            echo "::error::pinned haid==$pin computes different comparability hashes than the lockfile — the benchmark gate would reject current submissions as stale"
+            exit 1
+          fi
