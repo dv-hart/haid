@@ -1,0 +1,67 @@
+name: ci
+
+# The suite + consistency guards on every PR and push to main — checks that previously only
+# ran at release (publish.yml) or weekly. Shift-left: catch drift before merge, not at tag.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]   # min + max supported (requires-python >=3.10)
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.x"
+      - run: pip install -e ".[dev]"
+      - name: Version consistency (4 declarations agree)
+        run: python scripts/check_versions.py
+      - name: Benchmark comparability pin (offline)
+        run: python scripts/check_benchmark_pin.py --offline
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.x"
+      - run: pip install -e ".[dev]"
+      - name: Build + validate the distribution
+        run: |
+          python -m build
+          twine check dist/*
+      - name: No session data in the built package
+        # the leak class behind the viz-sample incident: fail if any packaged file carries
+        # Claude transcript content. .py source (the session parser) legitimately names these
+        # keys, so it's excluded.
+        run: |
+          set -euo pipefail
+          rm -rf _scan && mkdir _scan
+          for f in dist/*.tar.gz; do tar xzf "$f" -C _scan; done
+          for f in dist/*.whl; do (cd _scan && unzip -oq "../$f"); done
+          hits=$(grep -rlaE '"parentUuid"|"sessionId"|"toolUseResult"|"isSidechain"' _scan 2>/dev/null | grep -vE '\.py$' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::transcript-like content found in the built package:"; echo "$hits"; exit 1
+          fi
+          echo "clean: no transcript markers in the built package"

@@ -31,6 +31,20 @@ jobs:
         run: |
           python -m pip install --upgrade build
           python -m build
+      - name: No session data in the built package
+        # Release-time copy of ci.yml's leak guard — a tag push doesn't trigger ci.yml, so
+        # this is the authoritative last line before upload (the viz-sample incident class).
+        run: |
+          set -euo pipefail
+          rm -rf _scan && mkdir _scan
+          for f in dist/*.tar.gz; do tar xzf "$f" -C _scan; done
+          for f in dist/*.whl; do (cd _scan && unzip -oq "../$f"); done
+          hits=$(grep -rlaE '"parentUuid"|"sessionId"|"toolUseResult"|"isSidechain"' _scan 2>/dev/null | grep -vE '\.py$' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::transcript-like content found in the built package:"; echo "$hits"; exit 1
+          fi
+          rm -rf _scan
+          echo "clean: no transcript markers in the built package"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

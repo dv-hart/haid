@@ -1,0 +1,30 @@
+# Run the same hygiene + consistency checks locally that CI runs, before each commit.
+# Setup (once):  pip install -e ".[dev]" && pre-commit install
+# Run on demand: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+      - id: check-yaml
+      - id: mixed-line-ending          # reinforces .gitattributes
+        args: [--fix=lf]
+
+  # The project's own consistency guards, wired in here so they run automatically instead of
+  # being invoked by hand. `files:` limits each to commits that touch a relevant file.
+  - repo: local
+    hooks:
+      - id: check-versions
+        name: version consistency (pyproject + __init__ + plugin manifests agree)
+        entry: python scripts/check_versions.py
+        language: system
+        pass_filenames: false
+        files: '^(pyproject\.toml|src/haid/__init__\.py|\.claude-plugin/.*\.json)$'
+      - id: check-benchmark-pin
+        name: benchmark comparability pin (offline)
+        entry: python scripts/check_benchmark_pin.py --offline
+        language: system
+        pass_filenames: false
+        files: '^(src/haid/data/(difficulty|cleanliness)_anchors\.json|src/haid/scoring/value\.py|scripts/benchmark_pin\.json)$'
