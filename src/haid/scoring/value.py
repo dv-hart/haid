@@ -11,9 +11,21 @@ and validated upstream:
 The agreed model (see docs/scoring-rubric.md "Combining into achievement and value"):
 
     achievement = LOC**alpha  *  D(difficulty)  *  C(cleanliness)
-    value       = achievement / normalized_tokens
+    value       = achievement / (normalized_tokens / cost_unit)
 
-where, with knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001):
+where, with knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001), cost_unit (=1e9):
+
+  cost_unit makes `value` human-readable. The denominator is dominated by cache-read
+  tokens — every turn re-reads the whole cached context, so a real window accumulates
+  1e8..1e10 normalized tokens while achievement is order 10..1000. Dividing the raw ratio
+  out per single nTok therefore lands every value at ~1e-7 ("0.0" after rounding). We
+  instead report value as **achievement per BILLION normalized tokens** (one "GnTok"),
+  which puts it in an order-1..1000 range. cost_unit is a pure linear unit choice — it
+  preserves every ranking, percentile, and run-over-run comparison untouched — but it IS
+  pinned in combiner_config(), so two users on different units are bucketed apart on the
+  benchmark rather than silently mis-ranked (ADR-0005).
+
+and, with the remaining knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001):
 
   D(difficulty) = exp( lam * (latent - latent_median) )          # convex, Elo/BT-grounded
                   lam chosen so the hardest end is `top_ratio`x the median ("10x engineer").
@@ -57,14 +69,18 @@ DEFAULT_ALPHA = 0.5         # volume exponent: diminishing returns (sqrt)
 DEFAULT_TOP_RATIO = 10.0    # difficulty: hardest-end worth vs median ("10x engineer")
 DEFAULT_GAMMA = 2.0         # cleanliness penalty steepness
 DEFAULT_FLOOR = 0.001       # cleanliness floor: anti-LOC-spam guard
+DEFAULT_COST_UNIT = 1e9     # value denominator unit: achievement per BILLION nTok (GnTok)
 
 
 def combiner_config(*, alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
-                    gamma: float = DEFAULT_GAMMA, floor: float = DEFAULT_FLOOR) -> dict:
+                    gamma: float = DEFAULT_GAMMA, floor: float = DEFAULT_FLOOR,
+                    cost_unit: float = DEFAULT_COST_UNIT) -> dict:
     """The combiner knobs that fold the axes into `value`. Single source of truth for the
-    combiner-config hash: two users on the same ladders but different knobs are NOT
+    combiner-config hash: two users on the same ladders but different knobs (or a different
+    `cost_unit`, which rescales the value magnitude everyone is ranked on) are NOT
     comparable, so the benchmark payload pins these (ADR-0005)."""
-    return {"alpha": alpha, "top_ratio": top_ratio, "gamma": gamma, "floor": floor}
+    return {"alpha": alpha, "top_ratio": top_ratio, "gamma": gamma, "floor": floor,
+            "cost_unit": cost_unit}
 
 
 @dataclass(frozen=True)
@@ -108,16 +124,21 @@ class AchievementResult:
 
 @dataclass(frozen=True)
 class ValueResult:
-    """value = achievement / normalized_tokens. Achievement decomposition kept alongside."""
+    """value = achievement / (normalized_tokens / cost_unit) — achievement per `cost_unit`
+    normalized tokens (default: per billion, "GnTok"). Achievement decomposition kept
+    alongside; the raw normalized_tokens is preserved untouched."""
     value: float
     normalized_tokens: float
     achievement: AchievementResult
+    cost_unit: float = DEFAULT_COST_UNIT
     cost_breakdown: dict = field(default_factory=dict)   # optional by_type/by_tier passthrough
 
     def summary(self) -> str:
         v = "n/a" if self.value != self.value else f"{self.value:.4g}"
+        unit = f"{self.normalized_tokens / self.cost_unit:.3g}" if self.cost_unit else "n/a"
         return (f"value={v}  (achievement {self.achievement.achievement:.3g} / "
-                f"{self.normalized_tokens:.0f} nTok)\n" + self.achievement.summary())
+                f"{unit} GnTok; {self.normalized_tokens:.0f} nTok raw)\n"
+                + self.achievement.summary())
 
 
 # --- difficulty: interpolate a latent from the placement, then map to a convex multiplier
@@ -208,22 +229,36 @@ def achievement(volume, difficulty_pl: PlacementResult, cleanliness_pl: Placemen
     )
 
 
-def value(ach: AchievementResult, cost) -> ValueResult:
-    """value = achievement / normalized_tokens. `cost` is a cost.CostResult or a bare float."""
+def value_ratio(achievement: float, normalized_tokens: float, *,
+                cost_unit: float = DEFAULT_COST_UNIT) -> float:
+    """THE headline ratio — the single definition of `value`, shared by every caller
+    (value(), the window roll-up, the benchmark payload, and its plausibility re-check) so
+    they cannot drift. value = achievement / (normalized_tokens / cost_unit); nan when there
+    is no cost. cost_unit only rescales the denominator into a readable range (see the module
+    docstring) — it is linear, so it leaves all rankings/percentiles invariant."""
+    ntok = float(normalized_tokens)
+    if ntok <= 0:
+        return float("nan")
+    return achievement / (ntok / cost_unit)
+
+
+def value(ach: AchievementResult, cost, *, cost_unit: float = DEFAULT_COST_UNIT) -> ValueResult:
+    """value = achievement / (normalized_tokens / cost_unit). `cost` is a cost.CostResult or a
+    bare float."""
     ntok = getattr(cost, "normalized_tokens", cost)
     ntok = float(ntok)
-    v = ach.achievement / ntok if ntok > 0 else float("nan")
+    v = value_ratio(ach.achievement, ntok, cost_unit=cost_unit)
     breakdown = {}
     if hasattr(cost, "by_type"):
         breakdown = {"by_type": cost.by_type, "by_tier": cost.by_tier}
     return ValueResult(value=v, normalized_tokens=ntok, achievement=ach,
-                       cost_breakdown=breakdown)
+                       cost_unit=cost_unit, cost_breakdown=breakdown)
 
 
 def score(diff: str, difficulty_backend, cleanliness_backend, cost_result, *,
           samples: int = 1, alpha: float = DEFAULT_ALPHA,
           top_ratio: float = DEFAULT_TOP_RATIO, gamma: float = DEFAULT_GAMMA,
-          floor: float = DEFAULT_FLOOR) -> ValueResult:
+          floor: float = DEFAULT_FLOOR, cost_unit: float = DEFAULT_COST_UNIT) -> ValueResult:
     """End-to-end convenience: measure volume, place both axes, fold into value.
 
     Backends are supplied per axis (they may be the same object). Cost is passed in already
@@ -238,4 +273,4 @@ def score(diff: str, difficulty_backend, cleanliness_backend, cost_result, *,
     cpl = place(diff, "cleanliness", cleanliness_backend, samples=samples)
     ach = achievement(vol, dpl, cpl, alpha=alpha, top_ratio=top_ratio,
                       gamma=gamma, floor=floor)
-    return value(ach, cost_result)
+    return value(ach, cost_result, cost_unit=cost_unit)

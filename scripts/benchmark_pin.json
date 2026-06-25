@@ -1,10 +1,10 @@
 {
  "_comment": "Lockfile coupling this package's benchmark comparability to the haid VERSION the data-only benchmark repo's CI pins. See ADR-0005 and scripts/check_benchmark_pin.py. DO NOT hand-edit the hashes: run `python scripts/check_benchmark_pin.py --update` after an intentional change to an anchor ladder or the combiner config, then bump `pinned_haid_version` here AND the `pip install haid==X` pins in dv-hart/haid-benchmark's validate.yml + build.yml to the release that ships the change.",
  "benchmark_repo": "dv-hart/haid-benchmark",
- "pinned_haid_version": "0.0.5",
+ "pinned_haid_version": "0.0.7",
  "ladder_versions": {
   "difficulty": "38028a6c1e7977f7",
   "cleanliness": "e175a9e97394d1d4"
  },
- "combiner_config_hash": "8e4d437e68cd27e4"
+ "combiner_config_hash": "c19b35c05e634436"
 }

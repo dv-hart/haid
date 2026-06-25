@@ -96,11 +96,12 @@ class WindowDistribution:
         ach_total = sum(s.achievement.achievement for s in scored)
         tok_total = sum(s.normalized_tokens for s in scored)
         rungs = [s.difficulty.rung for s in scored if s.difficulty is not None]
+        v = _value.value_ratio(ach_total, tok_total)
         return {
             "n_scored": len(scored),
             "achievement_total": round(ach_total, 4),
             "normalized_tokens_total": round(tok_total, 1),
-            "value": (round(ach_total / tok_total, 6) if tok_total > 0 else None),
+            "value": (None if v != v else round(v, 6)),
             "difficulty_ceiling": round(max(rungs), 2) if rungs else None,
         }
 

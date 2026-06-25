@@ -177,8 +177,17 @@ The locked combiner (knob defaults in parentheses):
 
 ```
 achievement = LOC**alpha  *  D(difficulty)  *  C(cleanliness)
-value       = achievement / normalized_tokens
+value       = achievement / (normalized_tokens / cost_unit)
 
+  cost_unit (1e9)  value is reported as achievement per BILLION normalized tokens ("GnTok").
+                   The denominator is dominated by cache-read (every turn re-reads the whole
+                   cached context), so a real window runs 1e8..1e10 nTok while achievement is
+                   order 10..1000 — divided per single nTok, every value collapses to ~1e-7
+                   ("0.0" after rounding). The GnTok unit lands value in an order-1..1000
+                   range. It is a pure LINEAR unit choice: rankings, percentiles, and
+                   run-over-run comparisons are all invariant — but it is pinned in
+                   combiner_config (and the benchmark hash), so users on different units are
+                   bucketed apart rather than mis-ranked.
   alpha (0.5)      volume exponent — diminishing returns on raw surviving-LOC
   D(difficulty)    = exp( lam * (latent - latent_median) )
                      lam set so the hardest end is top_ratio x the median; top_ratio = 10

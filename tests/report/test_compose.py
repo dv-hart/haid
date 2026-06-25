@@ -157,7 +157,7 @@ def test_benchmark_row_fields():
     assert p["achievement_total"] == 52.0           # 2 + 50
     assert p["volume_loc_total"] == 520.0           # 400 + 120
     assert p["normalized_tokens_total"] == 9100.0
-    assert p["value_overall"] == round(52.0 / 9100.0, 6)   # total/total
+    assert p["value_overall"] == round(benchmark._value.value_ratio(52.0, 9100.0), 6)  # tot/tot
     assert p["difficulty_rung_median"] == 8.0       # median of [1, 8] (upper)
     assert p["cleanliness_pct_median"] == 0.9
     # comparability keys present and stable

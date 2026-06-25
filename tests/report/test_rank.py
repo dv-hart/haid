@@ -31,7 +31,8 @@ def test_lone_submitter_is_top_not_nan():
 
 def test_comparability_filter_excludes_other_versions_and_self():
     me = _me("you")
-    same = {**me, "github_username": "peer", "value_overall": 999.0}
+    # peer must out-value me; value_overall is now in GnTok units (much larger than 1)
+    same = {**me, "github_username": "peer", "value_overall": me["value_overall"] * 2}
     other_ladder = {**me, "github_username": "x", "ladder_versions": {"difficulty": "DEAD"}}
     other_combiner = {**me, "github_username": "y", "combiner_config_hash": "BEEF"}
     mine_again = {**me, "github_username": "you"}              # same user -> excluded

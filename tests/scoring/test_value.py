@@ -137,11 +137,34 @@ def test_difficulty_dominates_volume_at_the_top():
 
 
 # ---------------------------------------------------------------- value = achievement / cost
-def test_value_divides_by_normalized_tokens():
+def test_value_divides_by_normalized_tokens_in_gntok_units():
+    """value = achievement per cost_unit nTok (default 1e9), NOT per single nTok — otherwise
+    a real window (1e9 nTok) lands every value at ~1e-7 and rounds to 0.0."""
     ach = value.achievement(100.0, _mid_difficulty(), _clean_placement(1.0))
     vr = value.value(ach, 50_000.0)
-    assert abs(vr.value - ach.achievement / 50_000.0) < 1e-12
-    assert vr.normalized_tokens == 50_000.0
+    assert abs(vr.value - ach.achievement / (50_000.0 / value.DEFAULT_COST_UNIT)) < 1e-9
+    assert vr.normalized_tokens == 50_000.0       # raw cost preserved untouched
+    assert vr.cost_unit == value.DEFAULT_COST_UNIT
+
+
+def test_value_in_a_readable_range_for_a_real_window():
+    """A realistic window (achievement ~169 over ~2.1e9 nTok) yields ~80, never 0.0."""
+    ach = value.achievement(150.0, _diff_placement(beats=8, ties_top=True),
+                            _clean_placement(0.9))
+    vr = value.value(ach, 2.13e9)
+    assert 1.0 < vr.value < 1e4                    # order-1..1000, not ~1e-7
+
+
+def test_cost_unit_is_a_linear_rescale_only():
+    """Changing cost_unit scales value by exactly that factor — rankings are invariant."""
+    ach = value.achievement(100.0, _mid_difficulty(), _clean_placement(1.0))
+    per_tok = value.value(ach, 1e9, cost_unit=1.0).value
+    per_gtok = value.value(ach, 1e9, cost_unit=1e9).value
+    assert abs(per_gtok / per_tok - 1e9) < 1e-3
+
+
+def test_cost_unit_is_pinned_in_combiner_config():
+    assert value.combiner_config()["cost_unit"] == value.DEFAULT_COST_UNIT
 
 
 def test_value_linear_in_cost():
@@ -156,6 +179,7 @@ def test_value_handles_zero_cost():
     ach = value.achievement(100.0, _mid_difficulty(), _clean_placement(1.0))
     vr = value.value(ach, 0.0)
     assert vr.value != vr.value   # nan, not a crash
+    assert value.value_ratio(100.0, 0.0) != value.value_ratio(100.0, 0.0)   # helper: nan too
 
 
 if __name__ == "__main__":

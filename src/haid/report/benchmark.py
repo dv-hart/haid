@@ -87,8 +87,9 @@ def build_submission(scores_doc: dict, *, github_username: str, project: str,
     volume_loc_total = round(sum(e.get("achievement_components", {}).get("volume_loc", 0)
                                  for e in scored), 2)
     ntok_total = round(sum(e.get("normalized_tokens", 0) for e in eps), 1)
-    # the ranked overall score: total work done per token over the whole window
-    value_overall = (round(achievement_total / ntok_total, 6) if ntok_total > 0 else None)
+    # the ranked overall score: total work done per (cost_unit) tokens over the whole window
+    _vo = _value.value_ratio(achievement_total, ntok_total)
+    value_overall = (None if _vo != _vo else round(_vo, 6))
 
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -230,7 +231,7 @@ def _plausible(p: dict) -> None:
         raise SubmissionRejected(f"cleanliness_pct_median {cm} outside [0,1]")
     vo, at, nt = p["value_overall"], p["achievement_total"], p["normalized_tokens_total"]
     if vo is not None and nt:
-        expected = at / nt
+        expected = _value.value_ratio(at, nt)
         if abs(vo - expected) > 1e-4 * max(1.0, abs(expected)):
             raise SubmissionRejected(f"value_overall {vo} != achievement_total/"
                                      f"normalized_tokens ({expected:.6g}) — inconsistent")
