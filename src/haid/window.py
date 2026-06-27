@@ -14,6 +14,7 @@ the metrics consume. Stdlib only; no model.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +31,48 @@ def _first_ts(s: Session) -> str:
 
 def _sid(s: Session) -> str:
     return Path(s.path).stem[:8]
+
+
+# A HAID self-audit session is a Claude Code session that RAN HAID on the project — running the
+# haid-report skill, or invoking the `haid` CLI. It is meta-work, not project work: it produces
+# ~no project achievement yet costs real tokens (the whole pipeline fans out many agents), so
+# leaving it in the window dilutes the project's value score and — since the run happens inside
+# the project's own transcript dir — makes the project perturb its own measurement every run.
+# Detection is deterministic from the transcript (no model): the skill-attribution envelope
+# field, or a Bash tool call invoking a haid subcommand.
+_HAID_CLI = re.compile(
+    r"""(?:^|[\s;&|()'"])(?:python\s+-m\s+haid|haid)\s+"""
+    r"(?:metrics|tag|episodes|score|why|report|bridge|value|viz|benchmark|submit|rank|"
+    r"volume|cost|place)\b")
+
+
+def _is_self_audit(session: Session) -> bool:
+    for r in session.parse.records:
+        raw = getattr(r, "raw", None) or {}
+        if "haid-report" in (raw.get("attributionSkill") or ""):
+            return True
+        msg = raw.get("message") or {}
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, list):
+            for b in content:
+                if (isinstance(b, dict) and b.get("type") == "tool_use"
+                        and b.get("name") == "Bash"
+                        and _HAID_CLI.search((b.get("input") or {}).get("command", "") or "")):
+                    return True
+    return False
+
+
+def partition_self_audit(sessions: list[Session]) -> tuple[list[Session], list[Session]]:
+    """Split sessions into (project work, HAID self-audit). Deterministic, model-free."""
+    kept, excluded = [], []
+    for s in sessions:
+        (excluded if _is_self_audit(s) else kept).append(s)
+    return kept, excluded
+
+
+def _exclusion_note(excluded: list[Session]) -> str:
+    return (f"{len(excluded)} HAID self-audit session(s) excluded from the window "
+            f"(meta-analysis, not project work): {', '.join(_sid(s) for s in excluded)}")
 
 
 def build_view(sessions: list[Session], label: str = "") -> WindowView:
@@ -65,9 +108,16 @@ def for_project(project_path: str, days: int = 30, projects_root=None,
     now = now or datetime.now()
     since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     files = discover.find_sessions(project_path, projects_root=projects_root, since=since)
-    sessions = [load_session(str(fp)) for fp in files]
+    discovered = [load_session(str(fp)) for fp in files]
+    # Drop HAID self-audit sessions so the project isn't scored on the cost of measuring itself
+    # (and so the live analysis session can't perturb its own window). Surfaced as a note —
+    # never silent (trust-discipline.md §5).
+    sessions, excluded = partition_self_audit(discovered)
     label = f"{project_path} — last {days}d ({len(sessions)} sessions)"
-    return build_view(sessions, label=label), sessions
+    view = build_view(sessions, label=label)
+    if excluded:
+        view.notes.append(_exclusion_note(excluded))
+    return view, sessions
 
 
 def from_files(paths: list[str], label: str = "explicit session list") -> tuple[WindowView, list[Session]]:
