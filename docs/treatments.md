@@ -27,15 +27,23 @@ Compiled 2026-06-10/11 from three evidence tiers — every entry's `maturity` fi
 | HAID symptom key | Treatments (catalog ids) |
 |---|---|
 | `rereads.cross_session` | claude-md-concise · claude-md-behavioral-contract · skills-progressive-disclosure · skill-authoring-from-failures · runbook-skill-for-recurring-sequence · persistent-progress-artifacts · agents-md-cross-tool · repomix-context-packing |
-| `unused_context.bloat` | subagent-isolation-for-exploration · just-in-time-retrieval · skills-progressive-disclosure · clear-discipline-two-strikes |
-| `cost.cache_dominated` | subagent-isolation-for-exploration · ccusage-cost-visibility |
+| `cost.cache_dominated` | subagent-isolation-for-exploration · just-in-time-retrieval · ccusage-cost-visibility |
 | `retries.error_ignored` | runnable-verification-stop-hooks · hook-collections-guardrails · clear-discipline-two-strikes · runbook-skill-for-recurring-sequence |
 | `retouched.self_thrash` | plan-mode-bounded · spec-kit-spec-driven · design-before-code-on-shared-subsystem |
 | `alignment.corrections` / `alignment.re_prompts` | spec-first-interview · clear-discipline-two-strikes · plan-mode-bounded · spec-kit-spec-driven · design-before-code |
+| `bug.agent_self_inflicted` / `bug.regression` | runnable-verification-stop-hooks · hook-collections-guardrails |
+| `bug.incomplete_edit` | runnable-verification-stop-hooks · design-before-code-on-shared-subsystem |
+| `bug.user_spec_churn` | spec-first-interview · spec-kit-spec-driven |
+| `bug.external_source` | runnable-verification-stop-hooks |
 | `recurrence.fix_did_not_hold` | runnable-verification-stop-hooks · hook-collections-guardrails · skill-authoring-from-failures |
 | `cost.model_overkill` | model-tiering-official · claude-code-model-controls · tiered-routing-evidence · ccusage-cost-visibility |
 | `cleanliness.low` | scoped-review-pass-for-parsimony |
 | `drift.multi_topic` | one-feature-per-session · worktrees-parallel-isolation · spec-first-interview · clear-discipline-two-strikes |
+
+> `unused_context.bloat` was **retired 2026-06-26** as a coaching signal (too soft — a large read
+> of a never-edited file is usually legitimate). The metric is still measured; session meandering
+> (`drift.multi_topic`) covers the useful version. Bug-attribution rows (`bug.*`) added the same
+> day — see [detectors.md → Bug-source attribution](detectors.md).
 
 ## Load-bearing nuances (the compositor must respect these)
 

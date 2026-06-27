@@ -25,7 +25,7 @@ from .classify import (ClassifierBackend, HarnessBackend,
 from .messages import (SessionTagJob, UserMessage, extract_session_jobs,
                        extract_window_messages)
 
-__all__ = ["TaggedMessage", "tag_window", "to_json", "render",
+__all__ = ["TaggedMessage", "tag_window", "to_json", "tagged_from_json", "render",
            "ClassifierBackend", "ReplayBackend", "HarnessBackend",
            "PendingClassifications", "SessionTagJob", "UserMessage"]
 
@@ -41,6 +41,7 @@ class TaggedMessage:
     move: str
     work_type: str
     purpose: str
+    impl_kind: str | None = None   # feature/bugfix/refactor/chore when implementation, else None
 
 
 def tag_window(view, sessions, backend: ClassifierBackend) -> list[TaggedMessage]:
@@ -57,7 +58,8 @@ def tag_window(view, sessions, backend: ClassifierBackend) -> list[TaggedMessage
                 uuid=m.uuid, session_id=m.session_id, timeline=m.timeline, ts=m.ts,
                 index=m.index, text=m.text,
                 move=labels[m.uuid]["move"], work_type=labels[m.uuid]["work_type"],
-                purpose=labels[m.uuid]["purpose"])
+                purpose=labels[m.uuid]["purpose"],
+                impl_kind=labels[m.uuid].get("impl_kind"))
             for m in messages]
 
 
@@ -69,14 +71,29 @@ def to_json(tagged: list[TaggedMessage], label: str = "") -> dict:
         "window": label,
         "moves": list(taxonomy.MOVES),
         "work_types": list(taxonomy.WORK_TYPES),
+        "impl_kinds": list(taxonomy.IMPL_KINDS),
         "messages": [
             {"uuid": t.uuid, "session_id": t.session_id, "timeline": t.timeline,
              "ts": t.ts, "index": t.index,
-             "move": t.move, "work_type": t.work_type, "purpose": t.purpose,
+             "move": t.move, "work_type": t.work_type, "impl_kind": t.impl_kind,
+             "purpose": t.purpose,
              "text_preview": (t.text[:140] + "…") if len(t.text) > 140 else t.text}
             for t in tagged
         ],
     }
+
+
+def tagged_from_json(doc: dict) -> list[TaggedMessage]:
+    """Rebuild TaggedMessages from a `haid tag --json` document (the bug-anchor source reads
+    these). `text` is the stored preview — full text isn't carried in the hand-off."""
+    out = []
+    for m in (doc or {}).get("messages", []):
+        out.append(TaggedMessage(
+            uuid=m["uuid"], session_id=m["session_id"], timeline=m["timeline"],
+            ts=m.get("ts"), index=m.get("index", -1), text=m.get("text_preview", ""),
+            move=m["move"], work_type=m["work_type"], purpose=m.get("purpose", ""),
+            impl_kind=m.get("impl_kind")))
+    return out
 
 
 def render(tagged: list[TaggedMessage], label: str = "") -> str:
@@ -88,5 +105,6 @@ def render(tagged: list[TaggedMessage], label: str = "") -> str:
             cur_sess = t.session_id
             lines.append(f"\n## session {cur_sess}")
         branch = "" if t.timeline == "active" else f"  [{t.timeline}]"
-        lines.append(f"  {t.index:>3}. ({t.move} × {t.work_type}) {t.purpose}{branch}")
+        kind = f":{t.impl_kind}" if t.impl_kind else ""
+        lines.append(f"  {t.index:>3}. ({t.move} × {t.work_type}{kind}) {t.purpose}{branch}")
     return "\n".join(lines)

@@ -34,7 +34,7 @@
     {
       "id": "skills-progressive-disclosure",
       "title": "Agent Skills (SKILL.md) for procedures and domain knowledge",
-      "symptoms": ["rereads.cross_session", "unused_context.bloat"],
+      "symptoms": ["rereads.cross_session"],
       "treatment": "Move rarely-needed domain knowledge and repeatable multi-step procedures out of CLAUDE.md into skills. Create one 'when you keep pasting the same instructions, checklist, or multi-step procedure into chat'. Split rarely co-used content into separate bundled files.",
       "mechanism": "Three-level progressive disclosure: only name/description metadata is preloaded; the SKILL.md body loads when judged relevant; bundled reference files load only as needed - so bundled material is 'effectively unbounded' and costs no context until accessed. Written once, re-derived never, loaded on demand.",
       "applies_to": ["claude-code", "generic"],
@@ -76,7 +76,7 @@
     {
       "id": "clear-discipline-two-strikes",
       "title": "/clear between tasks; two-strikes restart after repeated corrections",
-      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic", "unused_context.bloat", "retries.error_ignored"],
+      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic", "retries.error_ignored"],
       "treatment": "Run /clear between unrelated tasks (the named anti-pattern is 'the kitchen sink session'). After correcting the agent twice on the same issue, /clear and restart with a better prompt incorporating what was learned: 'a clean session with a better prompt almost always outperforms a long session with accumulated corrections.'",
       "mechanism": "Polluted/full context degrades performance (context rot: as context tokens grow, recall accuracy drops - the model has a finite attention budget). A restart converts accumulated corrections into a better upfront prompt.",
       "applies_to": ["claude-code", "generic"],
@@ -91,7 +91,7 @@
     {
       "id": "subagent-isolation-for-exploration",
       "title": "Delegate exploration/research to subagents with separate contexts",
-      "symptoms": ["unused_context.bloat", "cost.cache_dominated"],
+      "symptoms": ["cost.cache_dominated"],
       "treatment": "Delegate investigation and research to subagents that read files in separate context windows and return condensed summaries (often 1,000-2,000 tokens after tens of thousands spent exploring). 'The infinite exploration' (hundreds of file reads filling context) is a named failure pattern whose documented fix is 'scope investigations narrowly or use subagents.'",
       "mechanism": "The main conversation keeps only the distilled answer; the exploration tokens live and die in the subagent's context, protecting the primary attention budget from context rot.",
       "applies_to": ["claude-code"],
@@ -107,7 +107,7 @@
     {
       "id": "just-in-time-retrieval",
       "title": "Just-in-time context retrieval over pre-loading",
-      "symptoms": ["unused_context.bloat"],
+      "symptoms": ["cost.cache_dominated"],
       "treatment": "Maintain lightweight identifiers (file paths, stored queries, links) and load data via tools at runtime instead of pre-loading everything; use targeted partial reads (head/tail, line ranges, search) rather than whole-file reads.",
       "mechanism": "Context holds only what the current step needs; Claude Code itself is the worked example of the pattern.",
       "applies_to": ["claude-code", "generic"],
@@ -135,7 +135,7 @@
     {
       "id": "spec-first-interview",
       "title": "Let the agent interview you, write a spec, execute in a fresh session",
-      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic"],
+      "symptoms": ["alignment.corrections", "alignment.re_prompts", "drift.multi_topic", "bug.user_spec_churn"],
       "treatment": "For underspecified work: have the agent interview you (clarifying questions), write the answers into a SPEC.md, then execute the spec in a FRESH session with clean context.",
       "mechanism": "Intent gets captured once, upfront, instead of leaking out through a correction stream; the fresh session executes against the spec without the negotiation residue.",
       "applies_to": ["claude-code", "generic"],
@@ -149,7 +149,7 @@
     {
       "id": "spec-kit-spec-driven",
       "title": "Spec-driven development tooling (GitHub spec-kit)",
-      "symptoms": ["retouched.self_thrash", "drift.multi_topic", "alignment.corrections"],
+      "symptoms": ["retouched.self_thrash", "drift.multi_topic", "alignment.corrections", "bug.user_spec_churn"],
       "treatment": "Use a spec-driven workflow toolkit: spec-kit's constitution -> specify -> clarify -> plan -> tasks -> validate -> implement slash-command flow forces structured specification before code generation; supports 30+ agent CLIs (Claude Code, Copilot, Gemini CLI, Cursor, Codex...).",
       "mechanism": "Treats agents as 'literal-minded pair programmers who... need unambiguous instructions' - the structure front-loads decisions that otherwise surface as mid-implementation rework.",
       "applies_to": ["claude-code", "codex", "copilot", "cursor", "generic"],
@@ -164,7 +164,7 @@
     {
       "id": "runnable-verification-stop-hooks",
       "title": "Runnable pass/fail checks, escalated to deterministic hooks",
-      "symptoms": ["recurrence.fix_did_not_hold", "retries.error_ignored"],
+      "symptoms": ["recurrence.fix_did_not_hold", "retries.error_ignored", "bug.agent_self_inflicted", "bug.regression", "bug.external_source", "bug.incomplete_edit"],
       "treatment": "Give the agent a check that produces pass/fail (test suite, build exit code, linter, fixture diff, browser screenshot vs design) so it self-iterates instead of stopping at 'looks done'. Escalation ladder: advisory CLAUDE.md instruction < deterministic hook ('unlike CLAUDE.md instructions which are advisory, hooks are deterministic'); a Stop hook can block the turn from ending until the check passes. For UI work, give end-user-style testing tools ('do all testing as a human user would') - this 'dramatically improved performance' in Anthropic's harness.",
       "mechanism": "Without a runnable check, 'looks done' is the only signal available; a closed verification loop converts recurring defects into in-session iterations, and hooks remove reliance on the model choosing to run the check.",
       "applies_to": ["claude-code"],
@@ -328,7 +328,7 @@
     {
       "id": "hook-collections-guardrails",
       "title": "Community hook collections for deterministic guardrails",
-      "symptoms": ["retries.error_ignored", "recurrence.fix_did_not_hold"],
+      "symptoms": ["retries.error_ignored", "recurrence.fix_did_not_hold", "bug.agent_self_inflicted", "bug.regression"],
       "treatment": "Adopt proven hooks rather than writing from scratch: e.g. awesome-claude-code-toolkit (2k+ stars, trending Feb 2026) ships production-tested hooks - destructive-command blocker, branch guard, syntax checker, context monitor. Wire test/lint runs to PostToolUse/Stop events so failures surface deterministically.",
       "mechanism": "Hooks always run (unlike advisory instructions), converting 'the agent should have checked' into 'the harness checked'.",
       "applies_to": ["claude-code"],
@@ -343,7 +343,7 @@
     {
       "id": "design-before-code-on-shared-subsystem",
       "title": "Sketch the design before writing code on an under-specified subsystem",
-      "symptoms": ["retouched.self_thrash", "alignment.corrections"],
+      "symptoms": ["retouched.self_thrash", "alignment.corrections", "bug.incomplete_edit"],
       "treatment": "When consecutive sessions keep rewriting the same structural areas of one file/subsystem, do a short design pass first (sketch the data flow, policies, and prompt/schema shape together) and get it approved before any code is written.",
       "mechanism": "Cross-session rework of the same areas usually means the first implementation encoded a narrow reading of an evolving requirement; surfacing the general design up front collapses two passes into one.",
       "applies_to": ["claude-code", "codex", "cursor", "generic"],

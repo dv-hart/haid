@@ -188,6 +188,33 @@ def test_to_json_shape():
     assert m["move"] == "refinement" and m["timeline"] == "active" and "reason" not in m
 
 
+def test_impl_kind_flows_through_and_defaults_null():
+    """The bug-attribution discriminator: bugfix carries to the TaggedMessage + JSON; a label
+    without impl_kind (legacy fixture) defaults to None, never raising."""
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    backend = _labels(
+        {"uuid": "u1", "move": "new_directive", "work_type": "implementation",
+         "impl_kind": "feature", "purpose": "Implement foo"},
+        {"uuid": "u2", "move": "correction", "work_type": "implementation",
+         "impl_kind": "bugfix", "purpose": "Fix the off-by-one in foo"},
+    )
+    tagged = intent.tag_window(None, [s], backend)
+    assert [t.impl_kind for t in tagged] == ["feature", "bugfix"]
+    doc = intent.to_json(tagged, label="t")
+    assert doc["impl_kinds"] == list(intent.taxonomy.IMPL_KINDS)
+    assert [m["impl_kind"] for m in doc["messages"]] == ["feature", "bugfix"]
+
+
+def test_impl_kind_absent_defaults_to_none():
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    backend = _labels(   # neither row carries impl_kind (pre-discriminator fixtures)
+        {"uuid": "u1", "move": "new_directive", "work_type": "question", "purpose": "p1"},
+        {"uuid": "u2", "move": "refinement", "work_type": "planning", "purpose": "p2"},
+    )
+    tagged = intent.tag_window(None, [s], backend)
+    assert [t.impl_kind for t in tagged] == [None, None]
+
+
 def test_replay_missing_label_raises():
     s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
     backend = _labels({"uuid": "u1", "move": "new_directive",

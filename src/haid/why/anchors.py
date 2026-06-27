@@ -15,6 +15,14 @@ DEFAULT_TOP = 6
 DEFAULT_PER_METRIC_CAP = 3
 DEFAULT_MIN_TOKENS = 200
 
+# Metrics excluded from the (expensive) why-pass: `unused_context` is the softest signal —
+# a large read of a never-edited file is usually legitimate (understanding the codebase),
+# so investigating it burns a tool-using agent to almost always conclude "no remedy". Session
+# meandering, surfaced cheaply from the purpose timeline (drift.multi_topic), is the more
+# useful version of "context that didn't pay off". The metric is still MEASURED as substrate;
+# it just no longer seeds an investigation or a treatment (decision 2026-06-26).
+_EXCLUDED_METRICS = frozenset({"unused_context"})
+
 
 @dataclass(frozen=True)
 class WhyAnchor:
@@ -52,6 +60,8 @@ def select_anchors(doc: dict, *, top: int = DEFAULT_TOP,
     by_metric: dict[str, list[dict]] = {}
     for inst in doc.get("instances", []):
         if inst.get("scope") != "window":
+            continue
+        if inst.get("metric") in _EXCLUDED_METRICS:
             continue
         tok = int(inst.get("token_weight", 0))
         if tok < min_tokens and inst.get("metric") != "retries":

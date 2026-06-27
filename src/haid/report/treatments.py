@@ -27,11 +27,17 @@ SYMPTOM_KEYS = frozenset({
     "rereads.in_context",           # redundant re-read within one context
     "retries.error_ignored",        # verbatim retry without addressing the error
     "retouched.self_thrash",        # rewrote own fresh code, no user trigger
-    "unused_context.bloat",         # large speculative reads never used
+    # (unused_context.bloat retired 2026-06-26 — too soft to coach; meandering replaces it)
     # alignment / intent-derived
     "alignment.corrections",        # user had to correct the agent
     "alignment.re_prompts",         # user had to repeat the ask
     "drift.multi_topic",            # one session/context carried many purposes
+    # bug-source attribution (per fix span; the actor is the headline)
+    "bug.agent_self_inflicted",     # agent introduced the bug it later fixed (process miss)
+    "bug.incomplete_edit",          # agent changed one site, missed a coupled one
+    "bug.regression",               # the change broke something previously working
+    "bug.user_spec_churn",          # a moved/ambiguous requirement caused the defect
+    "bug.external_source",          # pre-existing/dependency/env — inherited, not authored here
     # cross-session / recurrence
     "recurrence.fix_did_not_hold",  # same symptom re-reported after a fix
     # value-fold / cost diagnoses

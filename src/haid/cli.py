@@ -53,12 +53,17 @@
       (--project/--session, optional --days). Places BOTH axes (harness emits two manifests;
       replay reads saved verdicts). Knobs: --alpha --top-ratio --gamma --floor.
 
-  haid why [--project PATH | --session FILE...] [--days N] [--top N] [--model TIER] [--json]
+  haid why [--project PATH | --session FILE...] [--days N] [--top N] [--tags T.json] [--json]
       The why-pass, step 5: triage the window's top metric instances (by token weight, capped
       per metric; retries always considered) into investigation anchors, then delegate one
       tool-using analysis agent per anchor to the host agent. Each agent audits the anchor,
       explains why it happened with cited evidence, applies observable flags, and proposes a
       hedged remedy. Recommended agent tier: sonnet (--model overrides).
+      Bug-source attribution is NOT optional-by-omission (a silently-dropped feature is the
+      failure this was built to end): you must choose explicitly — pass --tags (the
+      `haid tag --json` output) to emit one attribution anchor per fix span (the agent traces
+      each bug to the agent, the user, or an external source — cite-or-orphan — on its own
+      --bug-top budget), or pass --no-bug-attribution to run waste-only. Neither = a hard error.
       --backend harness (default): emit why.job.json; re-run reads why.notes.json back.
       --backend replay --notes FILE...: saved notes (dev/CI, no model).
 
@@ -262,7 +267,7 @@ def _cmd_tag(args) -> int:
               f"Each job in {p.manifest_path} carries a branch transcript; the agent returns a "
               "`labels` array (one entry per marked message, echoing its uuid).\n"
               f"Aggregate every job's labels into:  {args.job_dir}/tag.labels.json "
-              '({"labels": [{"uuid":…, "move":…, "work_type":…, "purpose":…}, …]}),'
+              '({"labels": [{"uuid":…, "move":…, "work_type":…, "impl_kind":…, "purpose":…}, …]}),'
               " then re-run.")
         return 3
 
@@ -375,7 +380,28 @@ def _cmd_why(args) -> int:
                          generated_at=datetime.now().isoformat(timespec="seconds"))
     transcript_dir = str(Path(sessions[0].path).parent)
 
-    anchors = why.select_anchors(doc, top=args.top, per_metric_cap=args.per_metric_cap)
+    # Bug-source attribution anchors (one per fix span) come FIRST — they are the highest-value
+    # findings and have their own budget so waste anchors can't crowd them out. They need the
+    # message tags (`haid tag --json`). Attribution must NEVER be skipped silently — that is the
+    # exact silent-absence failure this feature was built to end — so the orchestrator must make
+    # an EXPLICIT choice: pass --tags (on) or --no-bug-attribution (waste-only). Neither = error.
+    if not args.tags and not args.no_bug_attribution:
+        print("haid why: refusing to run without a bug-attribution decision.\n"
+              "  - pass --tags out/report/tags.json (the `haid tag --json` output) to attribute "
+              "every fixed bug, OR\n"
+              "  - pass --no-bug-attribution to run waste-only (explicit opt-out).\n"
+              "Bug attribution is not optional-by-omission: a missed flag would silently drop "
+              "the highest-value findings.", file=sys.stderr)
+        return 2
+    bug_anchors = []
+    if args.tags:
+        tagged = intent.tagged_from_json(_load_json(args.tags))
+        bug_anchors = why.select_bug_anchors(tagged, view_, top=args.bug_top)
+        if not bug_anchors:
+            print("# note: no bug-fix spans found in the window (no anchors to attribute)",
+                  file=sys.stderr)
+    waste_anchors = why.select_anchors(doc, top=args.top, per_metric_cap=args.per_metric_cap)
+    anchors = bug_anchors + waste_anchors
     if not anchors:
         print("no anchors above threshold — nothing to investigate")
         return 0
@@ -709,6 +735,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="max anchors to investigate (budget)")
     wy.add_argument("--per-metric-cap", type=int, default=why.DEFAULT_PER_METRIC_CAP,
                     help="max anchors per metric")
+    wy.add_argument("--tags", help="haid tag --json output — adds bug-source-attribution "
+                    "anchors (one per fix span) on top of the waste anchors. Required unless "
+                    "--no-bug-attribution is given (no silent waste-only fallback)")
+    wy.add_argument("--no-bug-attribution", action="store_true",
+                    help="explicitly run waste-only, skipping bug-source attribution")
+    wy.add_argument("--bug-top", type=int, default=why.DEFAULT_BUG_TOP,
+                    help="max bug-attribution anchors (own budget; default 4)")
     wy.add_argument("--model", default=why.RECOMMENDED_MODEL,
                     help="recommended agent tier for the runner (default: sonnet)")
     wy.add_argument("--json", action="store_true", help="emit the JSON hand-off instead of Markdown")

@@ -57,6 +57,7 @@ class Finding:
     flags: list = field(default_factory=list)
     avoidable_tokens: int | None = None
     confidence: str = ""
+    bug: dict | None = None        # bug-attribution verdict (cause_class/origin/…) when a fix
 
 
 def symptoms_for_note(note: dict) -> list[str]:
@@ -81,16 +82,60 @@ def symptoms_for_note(note: dict) -> list[str]:
         # answered the user — alignment owns that signal, not retouch coaching.
         if "no_user_trigger" in flags:
             out.append("retouched.self_thrash")
-    elif metric == "unused_context":
-        out.append("unused_context.bloat")
+    # unused_context is intentionally NOT mapped to a symptom — it no longer coaches
+    # (see why/anchors.py _EXCLUDED_METRICS); session meandering covers the useful case.
     if "fix_did_not_hold" in flags:
         out.append("recurrence.fix_did_not_hold")
     return out
 
 
+# cause_class (× mistake_kind) -> canonical bug symptom keys. The actor IS the headline; the
+# mistake_kind refines an agent fault into the specific coachable miss. user/source are still
+# actionable (tighten the spec / add a contract test); undetermined is shown as a question with
+# no treatment (trust-discipline.md — the honest bucket).
+def symptoms_for_bug_note(note: dict) -> list[str]:
+    cause = note.get("cause_class")
+    out: list[str] = []
+    if cause == "agent":
+        out.append({"missing_verification": "bug.agent_self_inflicted",
+                    "incomplete_edit": "bug.incomplete_edit",
+                    "regression": "bug.regression"}.get(note.get("mistake_kind"),
+                                                        "bug.agent_self_inflicted"))
+    elif cause == "user":
+        out.append("bug.user_spec_churn")
+    elif cause == "source":
+        out.append("bug.external_source")
+    # cause == undetermined -> [] (no treatment; rendered as a question)
+    if note.get("holding") == "recurred":
+        out.append("recurrence.fix_did_not_hold")
+    return out
+
+
+def _bug_finding(n: dict, catalog: Catalog, counter) -> Finding:
+    """One bug-attribution finding — actor verdict + matched treatments (citable downstream)."""
+    symptoms = symptoms_for_bug_note(n)
+    treats = catalog.match(symptoms) if symptoms else []
+    verdict = {k: n.get(k) for k in ("cause_class", "origin", "origin_ref", "mistake_kind",
+                                     "scope", "holding")}
+    mk = f" · {n.get('mistake_kind')}" if n.get("mistake_kind") else ""
+    return Finding(
+        id=counter(), source="bug_note", symptoms=symptoms,
+        summary=f"[bug] CAUSE: {str(n.get('cause_class')).upper()}{mk} — "
+                f"{n.get('detail', '')[:90]}",
+        evidence=(n.get("note", "") + (" | audit: " + n["anchor_audit"]
+                                       if n.get("anchor_audit") else "")),
+        treatments=[{"id": t.id, "title": t.title} for t in treats],
+        suppressed=False, flags=[],
+        avoidable_tokens=n.get("estimated_rework_tokens"),
+        confidence=n.get("confidence", ""), bug=verdict)
+
+
 def _note_findings(why_doc: dict, catalog: Catalog, counter) -> list[Finding]:
     out = []
     for n in why_doc.get("notes", []):
+        if n.get("metric") == "bugfix":          # bug-attribution note: different contract
+            out.append(_bug_finding(n, catalog, counter))
+            continue
         flags = set(n.get("flags", []))
         symptoms = symptoms_for_note(n)
         suppressed = not symptoms and bool(flags & SUPPRESSING_FLAGS)
@@ -224,6 +269,29 @@ def digest_json(*, metrics_doc: dict | None, why_doc: dict | None, scores_doc: d
     }
 
 
+def _render_bug_card(f: dict) -> str:
+    """The user-facing bug card: actor verdict, traced origin, leverage. `f` is vars(Finding)."""
+    b = f.get("bug") or {}
+    cause = str(b.get("cause_class") or "undetermined").upper()
+    mk = f" · {b['mistake_kind']}" if b.get("mistake_kind") else ""
+    head = (f"  {f['id']} {cause}{mk}  "
+            f"(origin={b.get('origin')} · scope={b.get('scope')} · fix {b.get('holding')}"
+            + (f" · conf {f['confidence']}" if f.get("confidence") else "") + ")")
+    lines = [head, f"      {f['summary']}"]
+    ref = b.get("origin_ref")
+    if ref:
+        lines.append(f"      origin: {ref.get('session', '?')} @ {ref.get('ts', '?')} — "
+                     f"{ref.get('what', '')[:140]}")
+    lines.append(f"      evidence: {f['evidence'][:240]}")
+    if f.get("avoidable_tokens"):
+        lines.append(f"      rework: ~{f['avoidable_tokens']} tok")
+    if not f["symptoms"]:
+        lines.append("      (no traceable origin — shown as a question, not a verdict)")
+    for t in f["treatments"][:3]:
+        lines.append(f"      -> {t['id']}: {t['title']}")
+    return "\n".join(lines)
+
+
 def render_digest(d: dict) -> str:
     """The deterministic what/why report — readable without any model."""
     L = [f"# HAID report — {d.get('window') or 'window'}", ""]
@@ -244,8 +312,14 @@ def render_digest(d: dict) -> str:
                      f"C p{cc.get('percentile','?')}, {e.get('normalized_tokens',0):.0f} nTok)")
         L.append("")
     findings = d.get("findings", [])
-    active = [f for f in findings if f["symptoms"]]
-    earned = [f for f in findings if f["suppressed"]]
+    bugs = [f for f in findings if f.get("bug")]
+    active = [f for f in findings if f["symptoms"] and not f.get("bug")]
+    earned = [f for f in findings if f["suppressed"] and not f.get("bug")]
+    if bugs:
+        L.append("## Bug attribution — who introduced each fixed bug")
+        for f in bugs:
+            L.append(_render_bug_card(f))
+        L.append("")
     if active:
         L.append("## The why — findings with matched treatments")
         for f in active:
