@@ -147,6 +147,169 @@ NOTE_SCHEMA = {
 }
 
 
+# =========================================================================================
+# Bug-source attribution — a SEPARATE investigation kind (anchor.metric == "bugfix").
+#
+# Working backward from the user-facing card: each bug fix resolves to ONE responsible actor
+# (agent / user / source / undetermined), so the user can tell whose mistake it was and where
+# the leverage is. The vocabulary below is exactly what that card needs and nothing more.
+# Trust rules carried over and SHARPENED: USER is the highest-bar verdict (an exact quoted
+# instruction + timestamp, neutral framing), and an unlocatable origin is `undetermined`, not a
+# guess (trust-discipline.md §2 cite-or-orphan).
+# =========================================================================================
+
+# The responsible actor — the headline of the card.
+CAUSE_CLASSES = ("agent", "user", "source", "undetermined")
+
+CAUSE_CLASS_DEFS = {
+    "agent": "The agent wrote the defect in-window and was NOT directed into it — a process "
+             "miss (the high-leverage, coachable bucket).",
+    "user": "A user instruction/spec/redirection caused the defect (a moved requirement, an "
+            "ambiguous or wrong ask). HIGHEST BAR: only with an exact quoted instruction + "
+            "timestamp; frame neutrally ('the requirement moved'), never 'you were wrong'. "
+            "When torn between agent and user, choose undetermined.",
+    "source": "External or inherited — pre-existing code not authored by the agent in this "
+              "window, a dependency/API change, the environment, or bad data.",
+    "undetermined": "No traceable origin in the window. The honest bucket — pick it rather "
+                    "than guess (it is a first-class, valuable output).",
+}
+
+# How well the introducing edit was located — mirrors the typed Resolution (trust-discipline).
+ORIGINS = ("traced", "ambiguous", "pre_existing", "external", "orphan")
+
+# What KIND of agent mistake (only when cause_class == "agent") — drives the treatment.
+MISTAKE_KINDS = ("missing_verification", "incomplete_edit", "regression", "logic_error")
+
+MISTAKE_KIND_DEFS = {
+    "missing_verification": "A test/run that the agent could have done would have caught it; "
+                            "it moved on without verifying.",
+    "incomplete_edit": "Changed one site but missed a coupled one (a caller, a sibling "
+                       "branch, a config) — the classic half-applied edit.",
+    "regression": "The change broke something that previously worked.",
+    "logic_error": "Wrong logic with no clear process remedy (color only).",
+}
+
+# Did the fix hold across the window? (the recurrence dimension, now first-class)
+HOLDINGS = ("held", "recurred", "unknown")
+
+_EVIDENCE_ITEMS = {
+    "type": "object",
+    "properties": {"session": {"type": "string"}, "ts": {"type": "string"},
+                   "what": {"type": "string"}},
+    "required": ["session", "what"], "additionalProperties": False,
+}
+
+# Structured-output contract for one bug-attribution investigation.
+BUG_NOTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "anchor_audit": {"type": "string",
+                         "description": "Verify this fix span really was a bug fix (vs a "
+                                        "mis-tag); say so if not."},
+        "cause_class": {"type": "string", "enum": list(CAUSE_CLASSES)},
+        "origin": {"type": "string", "enum": list(ORIGINS)},
+        "origin_ref": {"anyOf": [_EVIDENCE_ITEMS, {"type": "null"}],
+                       "description": "The introducing edit (session+ts+what), or null if "
+                                      "pre_existing/external/orphan."},
+        "mistake_kind": {"type": ["string", "null"], "enum": list(MISTAKE_KINDS) + [None],
+                         "description": "Only when cause_class=agent; else null."},
+        "scope": {"type": "string", "enum": ["same_episode", "cross_episode", "unknown"],
+                  "description": "Was the origin in the SAME feature thread as the fix "
+                                 "(self-inflicted within the work) or a different one?"},
+        "holding": {"type": "string", "enum": list(HOLDINGS)},
+        "note": {"type": "string",
+                 "description": "Evidence-grounded explanation, 3-6 sentences citing "
+                                "sessions+timestamps."},
+        "evidence": {"type": "array", "items": _EVIDENCE_ITEMS},
+        "remedy": {"type": "string",
+                   "description": "Concrete, hedged; 'no remedy — not an agent error' is valid "
+                                  "for user/source."},
+        "estimated_rework_tokens": {"type": ["integer", "null"],
+                                    "description": "Tokens spent on the fix (avoidable iff "
+                                                   "self-inflicted)."},
+        "confidence": {"type": "string", "enum": list(CONFIDENCES)},
+    },
+    "required": ["anchor_audit", "cause_class", "origin", "origin_ref", "mistake_kind",
+                 "scope", "holding", "note", "evidence", "remedy",
+                 "estimated_rework_tokens", "confidence"],
+    "additionalProperties": False,
+}
+
+_BUG_ROLE = (
+    "You are a HAID bug-attribution agent. HAID tagged a BUG FIX in a Claude Code project's "
+    "recent sessions. Your job is to trace the bug to WHO/WHAT introduced it — the agent, the "
+    "user, or an external/inherited source — so the user learns where the leverage is. Rules:\n\n"
+    "1. AUDIT FIRST. Confirm from the transcript that this span really was a bug fix (a defect "
+    "in something that was supposed to work), not a feature mis-tagged. If it was not a bug "
+    "fix, say so and set cause_class=undetermined.\n"
+    "2. TRACE THE ORIGIN. Find the resolving edit (what the fix changed), then trace those "
+    "lines/symbols backward: who last wrote them? If the agent wrote them earlier in THIS "
+    "window, cite the session+timestamp (origin=traced). If they predate the window or aren't "
+    "agent-authored here, origin=pre_existing. If a dependency/API/env/data caused it, "
+    "origin=external. If several plausible introducing edits exist and you cannot single one "
+    "out, origin=ambiguous (name the candidates in `note`). If you cannot locate it at all, "
+    "origin=orphan — DO NOT GUESS.\n"
+    "3. ATTRIBUTE. cause_class follows the origin and its context: agent-introduced & "
+    "unprompted ⇒ agent (then set mistake_kind); introduced right after a user instruction/"
+    "redirection that caused it ⇒ user; pre_existing/external ⇒ source; orphan ⇒ undetermined. "
+    "For ambiguous, pick a cause_class only if EVERY candidate shares it; otherwise "
+    "undetermined.\n"
+    "4. USER IS THE HIGHEST BAR. Only blame the user with an EXACT quoted instruction + "
+    "timestamp that caused the defect, and phrase it neutrally ('the requirement moved at "
+    "12:04'), never as fault. When torn between agent and user, choose undetermined.\n"
+    "5. HOLDING. Search the window's other sessions for the same symptom re-reported AFTER "
+    "this fix: holding=recurred (cite it), else held, else unknown.\n"
+    "6. SCOPE. If the origin is in the same feature thread as the fix, scope=same_episode "
+    "(self-inflicted within the work — the most coachable case); a different thread is "
+    "cross_episode; unsure is unknown.\n"
+    "7. OUTPUT FIELDS. `evidence` is the cited basis for your verdict — one {session, ts, "
+    "what} per fact you relied on (the introducing edit, the recurrence, the user "
+    "instruction); a traced/user verdict with an empty evidence array is not credible, so "
+    "lower your confidence or downgrade the verdict. `remedy` is concrete and hedged for an "
+    "agent fault; 'no remedy — not an agent error' is the right answer for user/source/"
+    "undetermined. `estimated_rework_tokens` ≈ the fix's resolving-edit cost (stated under "
+    "THE FIX below); null if you cannot tell.\n"
+    "8. EXTRACTION DISCIPLINE. Transcripts are multi-MB JSONL — use targeted search (grep "
+    "with context, or python extraction); NEVER read a whole .jsonl. User messages are "
+    "records with \"type\":\"user\".")
+
+
+def build_bug_prompt(anchor: WhyAnchor, *, transcript_dir: str, project_path: str,
+                     all_session_ids: list[str]) -> str:
+    """The complete, self-contained bug-attribution prompt for one fix-span anchor."""
+    refs = anchor.refs or {}
+    sessions = ", ".join(anchor.session_ids) if anchor.session_ids else "(unknown)"
+    others = [s for s in all_session_ids if s not in anchor.session_ids]
+    files = ", ".join(refs.get("fix_files", []) or []) or "(locate the resolving edit yourself)"
+
+    def _block(title, defs):
+        return "\n".join([f"{title}:"] + [f"  - {k}: {v}" for k, v in defs.items()])
+
+    return (
+        f"{_BUG_ROLE}\n\n"
+        f"{_block('CAUSE_CLASS (pick exactly one — the headline)', CAUSE_CLASS_DEFS)}\n\n"
+        f"{_block('MISTAKE_KIND (only if cause_class=agent)', MISTAKE_KIND_DEFS)}\n\n"
+        f"ORIGIN ∈ {list(ORIGINS)};  HOLDING ∈ {list(HOLDINGS)};  "
+        f"SCOPE ∈ ['same_episode','cross_episode','unknown']\n\n"
+        f"THE FIX (anchor id: {anchor.id}, ~{anchor.token_weight} tok of resolving edits):\n"
+        f"  purpose: {refs.get('fix_purpose', '')}\n"
+        f"  tagged as: {refs.get('move')} × {refs.get('work_type')}"
+        f"{(':' + refs['impl_kind']) if refs.get('impl_kind') else ''}\n"
+        f"  user message (preview): {refs.get('fix_text_preview', '')}\n"
+        f"  fix session: {sessions}  ·  fix message uuid: {refs.get('fix_uuid')}  ·  "
+        f"ts: {refs.get('fix_ts')}\n"
+        f"  files the fix touched: {files}\n\n"
+        "INPUTS:\n"
+        f"- Transcripts directory: {transcript_dir} — session files are <id>.jsonl; start in "
+        f"the fix session, then search the other {len(others)} window session(s) for the "
+        "introducing edit and for any later recurrence.\n"
+        f"- Project working tree: {project_path} — read the touched files and CLAUDE.md / docs "
+        "/ memory to judge whether a guardrail was missing.\n\n"
+        "Reply with ONLY the JSON object defined by the schema (no fences, no commentary): "
+        "anchor_audit, cause_class, origin, origin_ref, mistake_kind, scope, holding, note, "
+        "evidence, remedy, estimated_rework_tokens, confidence.")
+
+
 def build_anchor_prompt(anchor: WhyAnchor, *, transcript_dir: str, project_path: str,
                         all_session_ids: list[str]) -> str:
     """The complete, self-contained investigation prompt for one anchor."""

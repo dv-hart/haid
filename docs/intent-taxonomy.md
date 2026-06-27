@@ -15,9 +15,11 @@
 >    only labels.
 > 2. **No deterministic priors.** A lexical/graph "priors seed the classifier" layer was built,
 >    then dropped on review — see [Deterministic priors](#deterministic-priors-were-dropped) below.
-> 3. **Output is `{move, work_type, purpose}`.** A `reason` audit field was dropped; `purpose` is
->    the load-bearing timeline entry. Category wording (esp. correction vs refinement) is still a
->    hypothesis until the live pass validates it on real labels.
+> 3. **Output is `{move, work_type, impl_kind, purpose}`.** A `reason` audit field was dropped;
+>    `purpose` is the load-bearing timeline entry. `impl_kind` (nullable; feature/bugfix/refactor/
+>    chore, set only when work_type=implementation) was ADDED 2026-06-26 as the bug-attribution
+>    discriminator — see the work-type row below. Category wording (esp. correction vs refinement)
+>    is still a hypothesis until the live pass validates it on real labels.
 
 This is the heart of the **user-anchored pass**. We classify each user message and
 emit a one-sentence purpose snapshot. The sequence of snapshots becomes the
@@ -71,7 +73,7 @@ Critically, **Correction lives on its own axis** so it is never filed next to
 |------|---------|
 | **Question** | info only, no artifact expected |
 | **Planning/design** | produce a decision/plan, not code |
-| **Implementation** | produce/change artifacts (absorbs generic "request" and "bug fix"; optional sub-tags: feature / bugfix / refactor / chore) |
+| **Implementation** | produce/change artifacts. **`impl_kind` sub-tag is now EMITTED** (feature / bugfix / refactor / chore), not optional — it is the load-bearing discriminator that lets the bug-source-attribution pass find fixes ([detectors.md → Bug-source attribution](detectors.md); `src/haid/intent/taxonomy.py` `IMPL_KINDS`). `bugfix` (and a `correction` move) seed the per-fix-span attribution agent. |
 | **Investigation/debug** | find out *why*; may or may not end in a fix |
 | **Meta/ops** | about the session itself (run, commit, configure), not the codebase |
 

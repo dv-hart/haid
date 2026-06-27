@@ -38,7 +38,7 @@ haid metrics ─┐  (no model)                                ┌─► haid re
 haid tag ─────┤  haiku × 1/session-branch     labels       │
 haid episodes ┤  haiku × 1 (optional)        grouping   ───┼─► haid viz  (no model) ──► out/report/haid-viz.html
 haid score ───┤  haiku × ~9-11/episode/axis  verdicts      │
-haid why ─────┘  sonnet × top anchors        notes         └─► haid benchmark (opt-in only)
+haid why ─────┘  sonnet × waste anchors + bug attribution (uses tags)  └─► haid benchmark (opt-in only)
 ```
 
 ## The universal loop
@@ -225,24 +225,35 @@ Notes that matter here:
 Re-run and save stdout → `out/report/scores.json`. Typical cost: ~9–11 judgments per
 episode per axis, two axes (difficulty, cleanliness).
 
-### 5. Why — investigate the top waste anchors
+### 5. Why — investigate the top waste anchors AND attribute every bug fix
 
 ```
-haid why --project P --days N --json
+haid why --project P --days N --tags out/report/tags.json --json
 ```
 
-Exit 3 writes `out/jobs/why.job.json`: triaged anchors (token-ranked, per-metric capped,
-retries always considered), `recommended_model` (default **sonnet** — honor it unless the
-user overrides), and one self-contained `prompt` per job with transcript paths, repo
-path, and the note `schema`.
+**Always pass `--tags`** (the step-2 output) so the pass emits **bug-source-attribution**
+anchors: one per fix span (a `bugfix` impl_kind, or a `correction` move on impl/investigation
+work), on their own `--bug-top` budget so waste anchors can't crowd them out. This is not
+optional-by-omission: `haid why` **hard-errors** if you give neither `--tags` nor
+`--no-bug-attribution`, so attribution can never be silently dropped. Only use
+`--no-bug-attribution` (waste-only) if the user explicitly asked to skip bug attribution.
+
+Exit 3 writes `out/jobs/why.job.json`: triaged anchors, `recommended_model` (default
+**sonnet** — honor it unless the user overrides), and one self-contained `prompt` per job.
+**Each job carries its OWN `schema`** — waste anchors use the why-note schema; bug anchors
+(`"metric": "bugfix"`) use the bug-attribution schema (cause_class agent/user/source/
+undetermined, origin, mistake_kind, scope, holding). Attach each job's own `schema`, not a
+single shared one.
 
 Spawn one **tool-using** agent per job at the recommended tier — these agents read
 transcripts and the repo (Read/Grep/Glob), run 1–4 minutes and ~45–80k tokens each, so
-fan out but don't be surprised by the cost. Each must return exactly one JSON note
-matching `schema`. Write `out/jobs/why.notes.json`:
-`{"notes": [{"anchor_id": ..., <schema fields>}, ...]}` — every anchor_id from the
-manifest must be present. Read-back validation is strict and will name what's missing
-or malformed.
+fan out but don't be surprised by the cost. A bug job's agent traces the defect to its
+introducing edit and must obey cite-or-orphan (no traceable origin ⇒ `undetermined`) and the
+high bar on blaming the user. Each must return exactly one JSON note matching ITS job's
+`schema`. Write `out/jobs/why.notes.json`:
+`{"notes": [{"anchor_id": ..., <that job's schema fields>}, ...]}` — every anchor_id from
+the manifest must be present. Read-back validation is strict (per anchor kind) and will name
+what's missing or malformed.
 
 Re-run and save stdout → `out/report/why.json`.
 

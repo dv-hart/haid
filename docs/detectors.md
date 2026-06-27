@@ -242,27 +242,44 @@ context for billing, ignore this."* The strong non-use proxy is **re-reading X
 after returning to it** (behavioral evidence it wasn't being usefully held). Flag
 only drift **× cost**; exploratory work legitimately wanders.
 
-### Recurrence — a fix that didn't hold *(cross-session; Phase 3)*
-The highest-value error-attribution signal is **cross-session**: a symptom fixed in one
-session and **re-reported by the user in a later one** — the fix didn't hold. The within-session
-Correction/Re-prompt axes miss this; it only shows across the window.
+### Bug-source attribution — who introduced each fixed bug *(BUILT 2026-06-26; `src/haid/why/bug_anchors.py` + the bug why-pass)*
+The highest-value error signal is not waste — it is a **defect**, and the coaching question is
+**whose mistake was it: the agent, the user, or an external/inherited source?** Working backward
+from that one-actor verdict drove the whole design (see [agent-analysis.md §4](../plans/agent-analysis.md)).
+
+**The unit is a fix span, not an episode.** A feature episode can span several sessions of
+feature work plus one bugfix; the fix is its own unit, and the most coachable case is a fix that
+traces back to the *same* episode's own earlier feature work (self-inflicted rework). A fix span
+is seeded by a tagged message that is `work_type=implementation, impl_kind=bugfix` **or** a
+`correction` move on implementation/investigation work — so the [`impl_kind` discriminator](intent-taxonomy.md)
+is what makes a fix visible at all (before it existed, fixes collapsed into generic
+"implementation" and were never traced — the gap this detector closes).
 
 ```
-for each bugfix episode (work-type = Implementation:bugfix, or a Correction that closed a bug):
-  symptom = the user's described problem (+ the files/region the fix touched)
-  search the window BACKWARD for an earlier episode fixing the same symptom/region
-  if found: report recurrence(first_fix → recurrence) and ask:
-     why didn't it hold? wrong layer? a doc/contract missed? (search the project tree)
+for each fix span (impl_kind=bugfix, or a correction that closed a defect):
+  footprint   = the resolving edits' files/lines + their token cost   # deterministic (bug_anchors.py)
+  emit a bug anchor → one tool-using why-agent, which:
+    audits   the span really was a bug fix
+    traces   the resolving edit backward to the introducing edit
+    attributes → cause_class ∈ {agent, user, source, undetermined}
+                 origin ∈ {traced, ambiguous, pre_existing, external, orphan}  (cite-or-orphan)
+                 mistake_kind (agent only) ∈ {missing_verification, incomplete_edit, regression, logic_error}
+                 scope ∈ {same_episode, cross_episode}  ·  holding ∈ {held, recurred, unknown}
 ```
-Exemplar: boxBot's "calendar integration is down" memory — fixed 5/13, recurred the morning of
-5/14 ([agent-analysis.md §4](../plans/agent-analysis.md)). Distinct from a within-session retry
-loop: recurrence spans **sessions** and is anchored on the **user re-reporting**, not a tool
-erroring. Route to error attribution: trace the introducing edit, determine what was missed.
-**CORRECTION (2026-06-09):** a live why-pass investigation found this exemplar's recurrence does
-NOT hold — the 5/12 OAuth production-mode fix held, and the 5/14 failures were different defects
-(a dropped-recipient bug, a sticky mute). The detection *mechanism* stands (a user re-report seeds
-a recurrence check); the investigation agent refusing to confirm the seeded narrative is the
-intended trust behavior, not a failure of the pass.
+The architecture decision: a **deterministic footprint** (the fix span + touched files) seeds the
+anchor; the **why-agent traces** the origin (transcript + project tree). Recurrence ("a fix that
+didn't hold" — a symptom re-reported in a later session) is now the `holding` dimension of this
+pass, not a separate detector.
+
+**Trust rules (sharpened from [trust-discipline.md §2](trust-discipline.md)):** an unlocatable
+origin is `undetermined` (the honest ORPHAN bucket), never a guess; and **USER is the highest-bar
+verdict** — only with an exact quoted instruction + timestamp, framed neutrally ("the requirement
+moved"), and when torn between agent and user the agent must choose `undetermined`.
+
+Exemplar that shaped the trust rule: boxBot's "calendar integration is down" memory — looked like a
+fix that recurred 5/13→5/14, but a live why-pass found the 5/12 OAuth fix *held* and the 5/14
+failures were different defects (`different_root_cause`). An investigation refusing to confirm a
+seeded recurrence narrative is the intended behavior, not a failure of the pass.
 
 ---
 
@@ -286,14 +303,14 @@ view, not as a basis for diagnosis.
 | Redundant re-reads | signature | silent inefficiency | none |
 | Retry loops | signature | silent inefficiency | none |
 | Re-touched lines | signature | silent rework | none (content-based; region identity not required) |
-| Unused context | signature | silent inefficiency | none |
+| Unused context | signature | silent inefficiency — MEASURED but **no longer coaches** (too soft; legitimate reads dominate; retired as a signal 2026-06-26, superseded by Purpose drift) | none |
 | `rereads @ window` (scope view) | signature | **re-establishment tax (rediscovery)** | none (file-id + session count) |
 | Co-churn | signature | **wrong contract (canonical case)** | none |
 | Behavioral contradiction | both | stale docs / misalignment | light (extract constraint) |
 | Goodhart confession | user-anchored | proxy-optimization | light (regex + confirm) |
 | Correction episodes | user-anchored | misalignment | light (classify message) |
-| Recurrence (cross-session) | user-anchored | **a fix that didn't hold** | medium (backward search + project read) |
-| Purpose drift | user-anchored | context bloat / wrong session boundary | light (read purpose timeline) + deterministic cost |
+| **Bug-source attribution** | user-anchored | **whose bug it was (agent/user/source) + a fix that didn't hold** | medium (per-fix-span agent: trace introducing edit + project read) |
+| Purpose drift (meandering) | user-anchored | context bloat / wrong session boundary | light (read purpose timeline) + deterministic cost |
 | Snapshot quality | soft layer | gross quality only | heavy — hedge it |
 
 ## The acid test

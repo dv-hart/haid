@@ -41,18 +41,43 @@ WORK_TYPES = ("question", "planning", "implementation", "investigation", "meta")
 WORK_TYPE_DEFS = {
     "question": "Information only; no artifact expected.",
     "planning": "Produce a decision, design, or plan — not code.",
-    "implementation": ("Produce or change artifacts (absorbs generic 'request' and 'bug "
-                       "fix'). Use this for feature work, bugfixes, refactors, and chores."),
+    "implementation": ("Produce or change artifacts. Use this for feature work, bugfixes, "
+                       "refactors, and chores — then set impl_kind to say WHICH."),
     "investigation": "Find out WHY; debug. May or may not end in a fix.",
     "meta": "About the session itself (run it, commit, configure) — not the codebase.",
 }
 
+# --- Axis B refinement: the KIND of implementation (the bug-attribution discriminator) ---
+# Only meaningful when work_type == "implementation"; null otherwise. `bugfix` is the
+# load-bearing value: it (and a `correction` move) is what seeds the bug-source-attribution
+# pass (docs/detectors.md "Recurrence / bug attribution"). Without this discriminator a fix
+# is invisible — it collapses into generic "implementation" and never gets traced.
+IMPL_KINDS = ("feature", "bugfix", "refactor", "chore")
+
+IMPL_KIND_DEFS = {
+    "feature": "New capability or behavior the project did not have before.",
+    "bugfix": ("Repairing something that was already supposed to work but didn't — the "
+               "user reports/implies a defect and asks for it to be made correct."),
+    "refactor": "Restructuring existing code without changing its observable behavior.",
+    "chore": "Mechanical upkeep — deps, config, formatting, renames, version bumps.",
+}
+
 # --- The per-message label shape (one entry of the session array below) ------------------
+# `impl_kind` is nullable and only set when work_type == "implementation"; it is intentionally
+# NOT in `required` so saved fixtures predating it still validate (the read-back defaults it to
+# null). The enum is extended with null so a schema-constrained runner can emit it cleanly.
+_IMPL_KIND_PROP = {
+    "type": ["string", "null"], "enum": list(IMPL_KINDS) + [None],
+    "description": "When work_type=implementation, WHICH kind (feature/bugfix/refactor/chore); "
+                   "else null. 'bugfix' is load-bearing — it seeds bug-source attribution.",
+}
+
 LABEL_SCHEMA = {
     "type": "object",
     "properties": {
         "move": {"type": "string", "enum": list(MOVES)},
         "work_type": {"type": "string", "enum": list(WORK_TYPES)},
+        "impl_kind": _IMPL_KIND_PROP,
         "purpose": {"type": "string",
                     "description": "One sentence: the current objective as of THIS message."},
     },
@@ -76,6 +101,7 @@ SESSION_LABELS_SCHEMA = {
                              "description": "Copy the uuid from this message's CLASSIFY marker."},
                     "move": {"type": "string", "enum": list(MOVES)},
                     "work_type": {"type": "string", "enum": list(WORK_TYPES)},
+                    "impl_kind": _IMPL_KIND_PROP,
                     "purpose": {"type": "string",
                                 "description": "One sentence: the objective as of THIS message."},
                 },
@@ -95,6 +121,10 @@ _DISCIPLINE = (
     "- CORRECTION vs REFINEMENT is the highest-value distinction: a correction means the "
     "prior work was wrong/unwanted; a refinement builds on work that was fine. When the user "
     "is simply adding more, it is a refinement, not a correction.\n"
+    "- impl_kind: ONLY when work_type is implementation, set impl_kind to feature / bugfix / "
+    "refactor / chore (otherwise null). bugfix = repairing something that was supposed to "
+    "work but didn't; feature = new behavior. This distinction is load-bearing — do not "
+    "default everything to feature.\n"
     "- The purpose snapshot is the DECLARED objective from what the user actually asked "
     "(a trustworthy anchor), in one sentence — e.g. 'Fixing the stale calendar-status "
     "memory.' Not a summary of what the agent did.")
@@ -128,10 +158,11 @@ def build_session_prompt(transcript: str, n_targets: int) -> str:
         f"{_SESSION_PREAMBLE}\n\n"
         f"{_enum_block('AXIS A — conversational move', MOVE_DEFS)}\n\n"
         f"{_enum_block('AXIS B — work type', WORK_TYPE_DEFS)}\n\n"
+        f"{_enum_block('AXIS B refinement — impl_kind (only if work_type=implementation)', IMPL_KIND_DEFS)}\n\n"
         f"{_DISCIPLINE}\n\n"
         f"{_SESSION_CAUSALITY}\n\n"
         f"--- the session branch ({n_targets} message(s) marked for classification) ---\n"
         f"{transcript}\n\n"
         "Respond ONLY via structured output: a `labels` array, one object per marked message "
-        "(uuid, move, work_type, purpose)."
+        "(uuid, move, work_type, impl_kind, purpose)."
     )

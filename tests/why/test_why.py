@@ -24,7 +24,7 @@ DOC = {
         _inst("rereads", 4, 1500),                       # over per-metric cap of 3
         _inst("retouched", 1, 900), _inst("retouched", 2, 700),
         _inst("retries", 1, 36),                         # tiny but exempt from floor
-        _inst("unused_context", 1, 150),                 # below min_tokens -> dropped
+        _inst("unused_context", 1, 8000),                # excluded metric -> never an anchor
         _inst("rereads", 9, 9999, scope="session"),      # session scope -> dropped
     ],
 }
@@ -35,7 +35,7 @@ def test_triage_ranking_caps_and_retries_exemption():
     ids = [a.id for a in anchors]
     assert ids[0] == "retries/window/1"            # retries float to front
     assert "rereads/window/4" not in ids           # per-metric cap
-    assert "unused_context/window/1" not in ids    # token floor
+    assert "unused_context/window/1" not in ids    # excluded metric (even at 8000 tok)
     assert "rereads/session/9" not in ids          # window scope only
     assert len(ids) == 6
     # remainder is token-ordered

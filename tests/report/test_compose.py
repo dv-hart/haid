@@ -8,7 +8,7 @@ import pytest
 from haid.report import (benchmark, build_findings, digest_json, load_catalog,
                          render_digest, render_report, validate_composition)
 from haid.report.compose import (HarnessBackend, PendingComposition, ReplayBackend,
-                                 symptoms_for_note)
+                                 symptoms_for_bug_note, symptoms_for_note)
 
 WHY_DOC = {"notes": [
     {"anchor_id": "rereads/window/1", "metric": "rereads",
@@ -58,9 +58,10 @@ def test_symptom_derivation_and_suppression():
     assert symptoms_for_note({"metric": "rereads", "flags": []}) == ["rereads.in_context"]
     assert symptoms_for_note({"metric": "retouched", "flags": ["no_user_trigger"]}) \
         == ["retouched.self_thrash"]
+    # unused_context retired as a coaching signal -> no symptom; recurrence flag still maps
     assert symptoms_for_note({"metric": "unused_context",
                               "flags": ["fix_did_not_hold"]}) \
-        == ["unused_context.bloat", "recurrence.fix_did_not_hold"]
+        == ["recurrence.fix_did_not_hold"]
 
 
 def _findings():
@@ -81,6 +82,61 @@ def test_findings_join_all_sources():
     # low cleanliness
     assert {"alignment.corrections", "drift.multi_topic", "cost.model_overkill",
             "cleanliness.low"} <= keys
+
+
+BUG_WHY_DOC = {"notes": [
+    {"anchor_id": "bugfix/window/1", "metric": "bugfix",
+     "detail": 'fix: "off-by-one in pager" (correction × implementation)',
+     "token_weight": 800, "anchor_audit": "confirmed real fix",
+     "cause_class": "agent", "origin": "traced",
+     "origin_ref": {"session": "aaaaaaaa", "ts": "2026-06-01T10:00", "what": "wrote pager()"},
+     "mistake_kind": "incomplete_edit", "scope": "same_episode", "holding": "recurred",
+     "note": "agent introduced this in its own feature work two sessions earlier",
+     "evidence": [], "remedy": "grep for callers before finishing",
+     "estimated_rework_tokens": 3200, "confidence": "high"},
+    {"anchor_id": "bugfix/window/2", "metric": "bugfix",
+     "detail": 'fix: "wrong column in export" (correction × implementation)',
+     "token_weight": 200, "anchor_audit": "confirmed",
+     "cause_class": "user", "origin": "traced",
+     "origin_ref": {"session": "bbbbbbbb", "ts": "x", "what": "spec said gross at msg 6"},
+     "mistake_kind": None, "scope": "cross_episode", "holding": "held",
+     "note": "the requirement moved at msg 14; original code followed the earlier ask",
+     "evidence": [], "remedy": "no remedy — not an agent error",
+     "estimated_rework_tokens": 500, "confidence": "medium"},
+    {"anchor_id": "bugfix/window/3", "metric": "bugfix",
+     "detail": 'fix: "mystery 500" (bugfix)', "token_weight": 100,
+     "anchor_audit": "confirmed", "cause_class": "undetermined", "origin": "orphan",
+     "origin_ref": None, "mistake_kind": None, "scope": "unknown", "holding": "unknown",
+     "note": "could not locate the introducing edit in the window", "evidence": [],
+     "remedy": "no traceable origin", "estimated_rework_tokens": None, "confidence": "low"},
+]}
+
+
+def test_bug_symptom_mapping():
+    assert symptoms_for_bug_note(BUG_WHY_DOC["notes"][0]) == \
+        ["bug.incomplete_edit", "recurrence.fix_did_not_hold"]   # agent + recurred
+    assert symptoms_for_bug_note(BUG_WHY_DOC["notes"][1]) == ["bug.user_spec_churn"]
+    assert symptoms_for_bug_note(BUG_WHY_DOC["notes"][2]) == []  # undetermined -> no treatment
+    assert symptoms_for_bug_note({"cause_class": "agent",
+                                  "mistake_kind": "missing_verification"}) \
+        == ["bug.agent_self_inflicted"]
+    assert symptoms_for_bug_note({"cause_class": "source"}) == ["bug.external_source"]
+
+
+def test_bug_findings_and_card_render():
+    fs = build_findings(why_doc=BUG_WHY_DOC, catalog=load_catalog())
+    assert all(f.source == "bug_note" for f in fs) and len(fs) == 3
+    agent_f = next(f for f in fs if f.bug["cause_class"] == "agent")
+    assert agent_f.treatments and agent_f.avoidable_tokens == 3200
+    undet = next(f for f in fs if f.bug["cause_class"] == "undetermined")
+    assert undet.symptoms == [] and not undet.treatments
+    d = digest_json(metrics_doc=None, why_doc=BUG_WHY_DOC, scores_doc=None,
+                    tags_doc=None, findings=fs, label="w")
+    text = render_digest(d)
+    assert "Bug attribution" in text
+    assert "AGENT · incomplete_edit" in text and "USER" in text
+    assert "no traceable origin" in text                # undetermined shown as a question
+    assert "origin: aaaaaaaa" in text
 
 
 def test_digest_renders_without_model():

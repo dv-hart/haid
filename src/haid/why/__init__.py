@@ -17,16 +17,19 @@ from __future__ import annotations
 
 from .anchors import (DEFAULT_MIN_TOKENS, DEFAULT_PER_METRIC_CAP, DEFAULT_TOP,
                       WhyAnchor, select_anchors)
-from .investigate import (HarnessBackend, Note, PendingInvestigations, ReplayBackend,
-                          WhyBackend, validate_note)
-from .prompts import FLAGS, NOTE_SCHEMA, RECOMMENDED_MODEL, build_anchor_prompt
+from .bug_anchors import DEFAULT_BUG_TOP, select_bug_anchors
+from .investigate import (BUG_METRIC, HarnessBackend, Note, PendingInvestigations,
+                          ReplayBackend, WhyBackend, validate_bug_note, validate_note)
+from .prompts import (BUG_NOTE_SCHEMA, FLAGS, NOTE_SCHEMA, RECOMMENDED_MODEL,
+                      build_anchor_prompt, build_bug_prompt)
 
 __all__ = [
-    "WhyAnchor", "select_anchors", "DEFAULT_TOP", "DEFAULT_PER_METRIC_CAP",
-    "DEFAULT_MIN_TOKENS", "WhyBackend", "ReplayBackend", "HarnessBackend",
-    "PendingInvestigations", "Note", "validate_note", "FLAGS", "NOTE_SCHEMA",
-    "RECOMMENDED_MODEL", "build_anchor_prompt", "investigate_window", "to_json",
-    "render",
+    "WhyAnchor", "select_anchors", "select_bug_anchors", "DEFAULT_TOP",
+    "DEFAULT_PER_METRIC_CAP", "DEFAULT_MIN_TOKENS", "DEFAULT_BUG_TOP", "BUG_METRIC",
+    "WhyBackend", "ReplayBackend", "HarnessBackend", "PendingInvestigations", "Note",
+    "validate_note", "validate_bug_note", "FLAGS", "NOTE_SCHEMA", "BUG_NOTE_SCHEMA",
+    "RECOMMENDED_MODEL", "build_anchor_prompt", "build_bug_prompt", "investigate_window",
+    "to_json", "render",
 ]
 
 
@@ -52,13 +55,33 @@ def render(results: list[tuple[WhyAnchor, Note]], *, label: str = "") -> str:
     for a, n in results:
         lines.append(f"## {a.id} (~{a.token_weight} tok) — {a.detail}")
         lines.append(f"   audit: {n['anchor_audit']}")
-        lines.append(f"   why:   {n['note']}")
-        if n["flags"]:
-            lines.append(f"   flags: {', '.join(n['flags'])}")
-        lines.append(f"   remedy: {n['remedy']}")
-        avoid = n["estimated_avoidable_tokens"]
-        if avoid is not None:
-            lines.append(f"   avoidable: ~{avoid} tok ({n['avoidable_basis']})")
-        lines.append(f"   confidence: {n['confidence']}")
+        if a.metric == "bugfix":
+            _render_bug_note(lines, n)
+        else:
+            lines.append(f"   why:   {n['note']}")
+            if n["flags"]:
+                lines.append(f"   flags: {', '.join(n['flags'])}")
+            lines.append(f"   remedy: {n['remedy']}")
+            avoid = n["estimated_avoidable_tokens"]
+            if avoid is not None:
+                lines.append(f"   avoidable: ~{avoid} tok ({n['avoidable_basis']})")
+            lines.append(f"   confidence: {n['confidence']}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _render_bug_note(lines: list, n: Note) -> None:
+    """The bug-attribution card: actor verdict first, then how it was traced."""
+    mk = f" · {n['mistake_kind']}" if n.get("mistake_kind") else ""
+    lines.append(f"   CAUSE: {n['cause_class'].upper()}{mk}  "
+                 f"(origin={n['origin']} · scope={n['scope']} · fix {n['holding']})")
+    ref = n.get("origin_ref")
+    if ref:
+        lines.append(f"   origin: {ref.get('session', '?')} @ {ref.get('ts', '?')} — "
+                     f"{ref.get('what', '')}")
+    lines.append(f"   why:   {n['note']}")
+    lines.append(f"   remedy: {n['remedy']}")
+    rework = n.get("estimated_rework_tokens")
+    if rework is not None:
+        lines.append(f"   rework: ~{rework} tok")
+    lines.append(f"   confidence: {n['confidence']}")

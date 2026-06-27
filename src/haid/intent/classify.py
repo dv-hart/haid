@@ -28,8 +28,17 @@ from . import taxonomy
 from .messages import SessionTagJob, UserMessage
 
 # A label is the validated structured output for one message.
-Label = dict      # {"move","work_type","purpose"}
-_LABEL_KEYS = ("move", "work_type", "purpose")
+Label = dict      # {"move","work_type","purpose","impl_kind"}
+_LABEL_KEYS = ("move", "work_type", "purpose")   # required; strict
+_OPT_KEYS = ("impl_kind",)                        # optional; default null if absent
+
+
+def _label_from_row(r: dict) -> Label:
+    """Pull the required keys (strict) plus any optional keys (default null) off a raw row."""
+    lab = {k: r[k] for k in _LABEL_KEYS}
+    for k in _OPT_KEYS:
+        lab[k] = r.get(k)
+    return lab
 
 
 class ClassifierBackend(ABC):
@@ -60,7 +69,7 @@ class ReplayBackend(ClassifierBackend):
             data = json.load(open(path, encoding="utf-8"))
             rows = data["labels"] if isinstance(data, dict) and "labels" in data else data
             for r in rows:
-                labels[r["uuid"]] = {k: r[k] for k in _LABEL_KEYS}
+                labels[r["uuid"]] = _label_from_row(r)
         return cls(labels)
 
     def classify_messages(self, session_jobs, messages) -> dict[str, Label]:
@@ -134,7 +143,7 @@ class HarnessBackend(ClassifierBackend):
         """Fold the agents' label rows into {uuid: Label}, failing loudly on any coverage gap
         — a missing or stray uuid means a session job wasn't answered (or was mis-answered)
         and would silently poison everything downstream."""
-        by_uuid = {r["uuid"]: {k: r[k] for k in _LABEL_KEYS} for r in rows}
+        by_uuid = {r["uuid"]: _label_from_row(r) for r in rows}
         missing = expected - set(by_uuid)
         extra = set(by_uuid) - expected
         if missing or extra:
