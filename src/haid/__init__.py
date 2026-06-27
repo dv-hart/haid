@@ -6,4 +6,4 @@ judgment those placements need is delegated to the host agent (Claude Code subag
 never an in-process API call — see haid.scoring.compare.
 """
 
-__version__ = "0.0.8"
+__version__ = "0.0.9"
