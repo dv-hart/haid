@@ -85,7 +85,7 @@ never manufacture phantom re-reads. That is data selection, applied the same at 
 {
   "schema_version": "1.0",
   "kind": "metrics",
-  "haid_version": "0.1.0",
+  "haid_version": "0.0.9",          // provenance: the haid that COMPUTED this (== __version__)
   "generated_at": "2026-06-07T12:00:00Z",
 
   "window": {
