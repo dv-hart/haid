@@ -83,6 +83,17 @@ def test_doc_shape():
     assert all(doc["metric_defs"][m]["rule"] for m in METRIC_NAMES)
 
 
+def test_haid_version_stamp_is_the_real_running_version():
+    """Provenance must name the haid that actually computed — never a hardcoded literal.
+    A stale stamp once masked a stale CLI (0.0.5 source hardcoding '0.1.0')."""
+    import haid
+    doc = json_out.build(_two_session_view(), generated_at="t")
+    assert doc["haid_version"] == haid.__version__
+    # explicit override still honored (e.g. replay provenance)
+    assert json_out.build(_two_session_view(), haid_version="9.9.9",
+                          generated_at="t")["haid_version"] == "9.9.9"
+
+
 def test_measurements_have_both_scopes():
     doc = json_out.build(_two_session_view(), generated_at="t")
     win = [r for r in doc["measurements"] if r["scope"] == "window"]

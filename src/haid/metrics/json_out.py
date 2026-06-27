@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .. import __version__
 from . import baseline, run_sessions, run_window, METRIC_NAMES, SCOPES
 
 SCHEMA_VERSION = "1.0"
@@ -103,8 +104,14 @@ def _call_index(view) -> dict:
 
 
 def build(view, sessions=None, *, project_path=None, days=None,
-          haid_version="0.1.0", generated_at="") -> dict:
-    """Assemble the full metrics JSON document from a WindowView (+ optional Session list)."""
+          haid_version=None, generated_at="") -> dict:
+    """Assemble the full metrics JSON document from a WindowView (+ optional Session list).
+
+    `haid_version` defaults to the running package's `__version__` — it is the PROVENANCE
+    stamp that tells a downstream reader (and the report skill) which haid actually did the
+    computation. Never hardcode it: a stale literal masks a stale CLI (the exact failure that
+    let a 0.0.5 install silently compute a report while everything looked current)."""
+    haid_version = haid_version or __version__
     win = run_window(view)
     per_sess = run_sessions(view)
     call_index = _call_index(view)

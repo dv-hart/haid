@@ -65,6 +65,9 @@ picked up, only missing ones are pending.
 ## Setup and inputs
 
 - Requires the `haid` CLI (`pip install -e .` in the HAID repo, or `pip install haid`).
+  **The CLI and this skill ship together and must be the same version** — see the Preflight
+  below. A *separate* pip install can shadow the plugin's CLI on PATH, so the computation
+  silently runs on stale code while `/plugin` reports a current version.
 - **Target selection**: default is the current project, last 30 days
   (`--project PATH --days N`). Explicit transcripts override: `--session FILE...`.
   WSL transcripts work via UNC paths with `--session`
@@ -82,6 +85,22 @@ picked up, only missing ones are pending.
 
 Run the steps in order. Tell the user what's running and roughly how many agents each
 step costs before fanning out a large step.
+
+### 0. Preflight — pin the CLI version (do this FIRST, before any computation)
+
+The chain is only as correct as the `haid` that runs it. **Run `haid --version` and confirm
+it matches the haid-report plugin version** (they release in lockstep from one repo).
+
+- **On mismatch — or if `haid` resolves to some unrelated install — STOP.** A different
+  version on PATH means the report would be computed by stale code: it looks authoritative
+  and is silently wrong. The classic tell is the **window value rounding to 0** (pre-0.0.7
+  CLIs lack the GnTok `cost_unit` rescale, so `achievement / raw_nTok ≈ 1e-7 → 0.0`).
+  Remedy to give the user: `pip install -U haid` to align the PATH CLI with the plugin, or
+  invoke the plugin-bundled CLI explicitly. Do not proceed until they agree.
+- **Provenance carries through every artifact.** `metrics.json` (and downstream docs) stamp
+  `haid_version` = the version that actually computed. After step 1, confirm
+  `metrics.json.haid_version` equals `haid --version`; if they disagree, there are two haids
+  installed — surface it. Quote the computing version in the final report.
 
 ### 1. Metrics (deterministic, free)
 

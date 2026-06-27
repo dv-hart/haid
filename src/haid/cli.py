@@ -99,7 +99,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import bridge, episodes, intent, report, viz, why, window
+from . import __version__, bridge, episodes, intent, report, viz, why, window
 from .episodes import score as episode_score
 from .metrics import json_out, view
 from .scoring import cost, placement, value, volume
@@ -594,6 +594,10 @@ def _cmd_viz(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="haid", description="HAID scoring")
+    # provenance: lets the report skill (and users) gate on the version that will compute —
+    # a stale CLI shadowing the plugin silently produces wrong scores. Stamped in metrics.json
+    # too (json_out.build), but a bare flag makes the preflight check trivial.
+    p.add_argument("--version", action="version", version=f"haid {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     mt = sub.add_parser("metrics", help="waste metrics over an analysis window (the substrate)")
