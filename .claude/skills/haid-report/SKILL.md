@@ -126,8 +126,12 @@ writes three manifest kinds, each with its own `schema` + `fingerprint`:
 The chain's one heavy fan-out — use the committed pipeline:
 
 1. `python .claude/skills/haid-report/scripts/split_score_manifests.py --job-dir out/jobs` (capture
-   stdout) → `out/jobs/score_split/` files + `{base, manifests:[{manifest, kind, n, fingerprint,
-   schema}]}` (`kind` = pairwise | detect | verify).
+   stdout) → `out/jobs/score_split/` files + `{base, schemas:{<kind>:…}, manifests:[{manifest, kind,
+   n, fingerprint}]}` (`kind` = pairwise | detect | verify). The per-kind `schemas` ride at the **top
+   level on purpose**: nested-in-array data gets dropped when `args` are marshalled, which silently
+   disables structured-output forcing and degrades judges to free-text. **Pass that stdout to the
+   workflow verbatim** (don't re-key, summarize, or strip `schemas`); the workflow aborts loudly if a
+   kind's schema is missing rather than judging unforced.
 2. `Workflow({ scriptPath: ".claude/workflows/haid-judge.js", args: <that object> })` → one haiku
    judge per job, returns one group per manifest carrying `kind, fingerprint, complete`, answers.
 3. For each group with `complete: true`, write the answers file (suffix + key by `kind`):

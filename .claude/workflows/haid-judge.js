@@ -4,8 +4,10 @@ export const meta = {
   phases: [{ title: 'Judge', detail: 'one haiku judge per scoring job' }],
 }
 
-// Each manifest carries its OWN schema + kind (from the splitter, sourced from haid's manifest),
-// so this workflow never hardcodes a schema and cannot drift from haid/scoring. The three kinds:
+// Schemas arrive TOP-LEVEL by kind (from the splitter, sourced from haid's manifests), so this
+// workflow never hardcodes a schema and cannot drift from haid/scoring. They ride top-level — not
+// nested per manifest — because the host model marshals `args` and drops nested-in-array data, which
+// would leave judges with no schema and silently disable structured-output forcing. The three kinds:
 //   pairwise -> {winner, reason}   folded to winners[]    -> <manifest>.verdicts.json
 //   detect   -> {findings:[...]}   single job             -> <manifest>.findings.json
 //   verify   -> {verdict, reason}  folded to verdicts[]   -> <manifest>.verdicts.json
@@ -17,15 +19,26 @@ phase('Judge')
 // is committed and invoked by path rather than re-authored each run.
 const input = typeof args === 'string' ? JSON.parse(args) : args
 const base = input.base               // dir holding <manifest>__<k>.txt prompt files
-const manifests = input.manifests     // [{ manifest, kind, n, fingerprint, schema }] from splitter
+const manifests = input.manifests     // [{ manifest, kind, n, fingerprint }] from splitter
+const schemas = input.schemas || {}   // { pairwise|detect|verify: <schema> } — TOP-LEVEL, by kind
 const model = input.model || 'haiku'
+
+// FAIL LOUD if any kind's schema is missing. Forcing the StructuredOutput tool depends entirely on a
+// real schema object reaching agent(); a missing schema silently turns forcing off and the whole run
+// degrades to free-text (the diagnosed millions-of-tokens failure). Abort cheaply instead.
+for (const kind of new Set(manifests.map(m => m.kind))) {
+  if (!schemas[kind] || typeof schemas[kind] !== 'object')
+    throw new Error(`haid-judge: no schema for kind '${kind}' in args.schemas — structured-output ` +
+      `forcing would be disabled; aborting. Re-run split_score_manifests.py and pass its stdout ` +
+      `verbatim as args (the per-kind schemas must survive at the top level).`)
+}
 
 // One independent job per prompt file. Never batch a manifest's jobs into one agent: pairwise
 // counterbalancing and per-finding verification both assume each judgment is decided in isolation.
 const items = []
 for (const m of manifests) {
   for (let k = 0; k < m.n; k++) {
-    items.push({ manifest: m.manifest, kind: m.kind, schema: m.schema, k,
+    items.push({ manifest: m.manifest, kind: m.kind, schema: schemas[m.kind], k,
                  path: `${base}/${m.manifest}__${k}.txt` })
   }
 }
@@ -43,13 +56,14 @@ const judged = await parallel(items.map(it => () =>
   ).then(r => ({ manifest: it.manifest, k: it.k, result: r }))
 ))
 
-// The `schema` option asks the harness to force a StructuredOutput tool call and return a
-// validated object — but a custom `agentType` only gets that as an *appended instruction*, not a
-// hard constraint, so haiku routinely ignores it and emits fenced/inline JSON as its final text.
-// In that case agent() returns the raw string, not an object. Accept BOTH: when forcing fires,
-// `coerce` is a no-op passthrough; when it doesn't, we extract the last complete JSON object from
-// the reply — the "tolerant extraction" runner rule the skill mandates. This makes the workflow
-// independent of whether forcing succeeds in a given harness.
+// With a real schema at spawn (guaranteed above), the harness FORCES a StructuredOutput tool call
+// and agent() returns a validated object — verified reliable even on 25k-token diffs, including with
+// agentType:'general-purpose'. (The earlier production failures were NOT haiku ignoring the schema:
+// the per-manifest schema was dropped when the host model marshalled `args`, so agent() got
+// schema:undefined and forcing never engaged; the top-level-by-kind hand-off + the guard above fix
+// that.) `coerce` stays only as a defensive passthrough — a forced reply is already an object, so the
+// last-ditch JSON extraction never fires on the happy path; if forcing is ever absent, an unparseable
+// reply fails the shape check below and the job is re-judged, never silently mis-scored.
 function lastJsonObject(text) {
   if (typeof text !== 'string') return null
   let depth = 0, start = -1, inStr = false, esc = false, best = null
