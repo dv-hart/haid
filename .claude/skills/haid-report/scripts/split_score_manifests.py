@@ -11,8 +11,12 @@ THREE manifest kinds (difficulty is still pairwise; cleanliness is detect→veri
 Holding all those prompts (diffs inlined) in the orchestrator's context blows up on a real
 window. This splitter does the heavy I/O mechanically, outside any model's context: it writes
 each job's prompt to `<job-dir>/score_split/<stem>__<k>.txt` and prints a tiny index for the
-`haid-judge` workflow to fan out over. Each index entry carries the manifest's own `schema` and
-its `kind`, so the workflow needs no per-kind schema knowledge and cannot drift from haid's.
+`haid-judge` workflow to fan out over. The per-kind `schema` objects ride at the TOP LEVEL of the
+index (keyed by kind), NOT nested inside each manifest entry: the host model marshals the workflow
+`args` and silently drops nested-in-array data, so a per-manifest schema arrives as `undefined` —
+which disables structured-output forcing and degrades every judge to free-text (the diagnosed
+token-blowup failure). Top-level fields survive marshalling, so the schema stays sourced from haid
+(no drift) AND reaches the judge intact. There are only three kinds, so this is at most three entries.
 
 The `stem` is the manifest filename minus `.job.json`, so the answer file the haid backend reads
 back is always `<stem>.<answers-suffix>`:
@@ -22,8 +26,8 @@ back is always `<stem>.<answers-suffix>`:
 
 stdout (UTF-8, no BOM) is the exact `args` object for the haid-judge workflow:
   {"base": "<job-dir>/score_split",
-   "manifests": [{"manifest": "<stem>", "kind": "...", "n": <count>,
-                  "fingerprint": "<fp>", "schema": {...}}, ...]}
+   "schemas": {"pairwise": {...}, "detect": {...}, "verify": {...}},   # by kind, TOP-LEVEL
+   "manifests": [{"manifest": "<stem>", "kind": "...", "n": <count>, "fingerprint": "<fp>"}, ...]}
 """
 from __future__ import annotations
 
@@ -69,6 +73,7 @@ def main() -> int:
         os.remove(stale)
 
     index = []
+    schemas: dict = {}                                # per-kind, sourced from haid's manifests
     for p in paths:
         try:
             with open(p, encoding="utf-8") as fh:
@@ -84,12 +89,22 @@ def main() -> int:
         for k, prompt in enumerate(prompts):
             with open(os.path.join(out_dir, f"{stem}__{k}.txt"), "w", encoding="utf-8") as f:
                 f.write(prompt)
+        if d.get("schema") is not None:
+            schemas.setdefault(kind, d["schema"])     # one schema per kind, lifted to top level
         index.append({"manifest": stem, "kind": kind, "n": len(prompts),
-                      "fingerprint": d["fingerprint"], "schema": d.get("schema")})
+                      "fingerprint": d["fingerprint"]})
 
     if not index:
         print(f"no score manifests found in {args.job_dir} "
               f"(inspected {len(paths)} *{_SUFFIX})", file=sys.stderr)
+        return 1
+
+    # Structured-output forcing depends on a real schema reaching every judge; a kind with no schema
+    # would silently fall back to free-text. Refuse loudly here rather than let that happen downstream.
+    missing = sorted({m["kind"] for m in index} - set(schemas))
+    if missing:
+        print(f"no 'schema' on manifest(s) of kind {missing} — structured-output forcing would be "
+              "disabled; aborting (regenerate the manifests with `haid score`)", file=sys.stderr)
         return 1
 
     total = sum(m["n"] for m in index)
@@ -99,7 +114,7 @@ def main() -> int:
     print(f"split {total} job(s) from {len(index)} manifest(s) "
           f"({by_kind}) into {out_dir}", file=sys.stderr)
     # Forward-slash base so the path strings work whether judges run on Windows or WSL.
-    json.dump({"base": out_dir.replace(os.sep, "/"), "manifests": index},
+    json.dump({"base": out_dir.replace(os.sep, "/"), "schemas": schemas, "manifests": index},
               sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

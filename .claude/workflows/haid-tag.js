@@ -34,11 +34,12 @@ const tagged = await parallel(jobs.map(j => () =>
   ).then(r => ({ job_id: j.job_id, n_targets: j.n_targets, result: r }))
 ))
 
-// A custom agentType gets the schema only as an APPENDED instruction, not a hard constraint, so
-// haiku routinely emits fenced/inline JSON as its final text instead of a forced tool call. Accept
-// BOTH: when forcing fires, `coerce` is a passthrough; otherwise extract the last complete JSON
-// object from the reply (the "tolerant extraction" runner rule). Independent of whether forcing
-// succeeds in a given harness.
+// With a real schema at spawn, the harness FORCES a StructuredOutput tool call and agent() returns a
+// validated object — reliable even with agentType:'general-purpose' (verified on the score path). The
+// schema reaches agent() because it rides TOP-LEVEL in args (see above); nested-in-array data would be
+// dropped in marshalling and silently disable forcing. `coerce` stays only as a defensive passthrough:
+// a forced reply is already an object, so the last-ditch JSON extraction never fires on the happy path;
+// if forcing is ever absent, an unparseable reply fails the count check below and the branch is re-run.
 function lastJsonObject(text) {
   if (typeof text !== 'string') return null
   let depth = 0, start = -1, inStr = false, esc = false, best = null
