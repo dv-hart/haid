@@ -51,7 +51,7 @@
       Full fold: volume * difficulty * cleanliness = achievement; achievement / cost = value.
       Inputs come EITHER from explicit --diff/--usage, OR from real sessions via the bridge
       (--project/--session, optional --days). Places BOTH axes (harness emits two manifests;
-      replay reads saved verdicts). Knobs: --alpha --top-ratio --gamma --floor.
+      replay reads saved verdicts). Knobs: --alpha --top-ratio --k-defect --loc-floor --exec-floor.
 
   haid why [--project PATH | --session FILE...] [--days N] [--top N] [--tags T.json] [--json]
       The why-pass, step 5: triage the window's top metric instances (by token weight, capped
@@ -107,7 +107,7 @@ from pathlib import Path
 from . import __version__, bridge, episodes, intent, report, viz, why, window
 from .episodes import score as episode_score
 from .metrics import json_out, view
-from .scoring import cost, placement, value, volume
+from .scoring import cost, detect, placement, value, volume
 from .scoring.compare import HarnessBackend, PendingComparisons, ReplayBackend
 
 
@@ -209,36 +209,40 @@ def _cmd_value(args) -> int:
               file=sys.stderr)
         return 2
     vol = volume.measure(diff)
-    knobs = dict(alpha=args.alpha, top_ratio=args.top_ratio, gamma=args.gamma,
-                 floor=args.floor)
+    knobs = dict(alpha=args.alpha, top_ratio=args.top_ratio, k_defect=args.k_defect,
+                 loc_floor=args.loc_floor, exec_floor=args.exec_floor)
 
     if args.backend == "replay":
         if not args.id or not args.verdicts:
             print("replay backend needs --id and --verdicts", file=sys.stderr)
             return 2
-        backend = ReplayBackend.from_files(*args.verdicts)
-        dpl = placement.place(diff, "difficulty", backend, subject_id=args.id,
-                              samples=args.samples)
-        cpl = placement.place(diff, "cleanliness", backend, subject_id=args.id,
-                              samples=args.samples)
+        dpl = placement.place(diff, "difficulty", ReplayBackend.from_files(*args.verdicts),
+                              subject_id=args.id, samples=args.samples)
+        # cleanliness replay: --verdicts files carry the saved {subject_id: {findings, verify}}
+        defects = detect.ReplayBackend.from_files(*args.verdicts).for_subject(args.id) \
+                        .detect(diff, vol.raw_added)
     else:
         pending = []
-        placements = {}
-        for axis in ("difficulty", "cleanliness"):
-            be = HarnessBackend(job_dir=args.job_dir, job_name=axis)
-            try:
-                placements[axis] = placement.place(diff, axis, be, samples=args.samples)
-            except PendingComparisons as p:
-                pending.append((axis, p.manifest_path))
+        dpl = None
+        try:
+            dpl = placement.place(diff, "difficulty",
+                                  HarnessBackend(job_dir=args.job_dir, job_name="difficulty"),
+                                  samples=args.samples)
+        except PendingComparisons as p:
+            pending.append(("difficulty", p.manifest_path))
+        defects = None
+        try:
+            defects = detect.HarnessBackend(job_dir=args.job_dir, job_name="cleanliness") \
+                            .detect(diff, vol.raw_added)
+        except detect.PendingDetection as p:
+            pending.append((f"cleanliness/{p.phase}", p.manifest_path))
         if pending:
-            for axis, mpath in pending:
-                print(f"{axis}: run subagents over {mpath}, write winners (plus the "
-                      f"manifest's fingerprint) to {args.job_dir}/{axis}.verdicts.json")
+            for label_, mpath in pending:
+                print(f"{label_}: run subagents over {mpath}, write answers beside it")
             print("then re-run.")
             return 3
-        dpl, cpl = placements["difficulty"], placements["cleanliness"]
 
-    ach = value.achievement(vol, dpl, cpl, **knobs)
+    ach = value.achievement(vol, dpl, defects, **knobs)
     print(value.value(ach, cst).summary())
     return 0
 
@@ -344,15 +348,18 @@ def _cmd_score(args) -> int:
         print(f"Group sessions first: run the grouping agent over {p.manifest_path}, then re-run.")
         return 3
 
-    # Placement is delegated to the host agent per episode/axis (the live path). A future replay
-    # path would key verdicts by episode id.
+    # Each axis is delegated to the host agent per episode (the live path): difficulty is a
+    # pairwise placement (compare.HarnessBackend), cleanliness is defect detection→verify
+    # (detect.HarnessBackend). A future replay path would key answers by episode id.
     def backend_for(axis: str, subject_id: str):
+        if axis == "cleanliness":
+            return detect.HarnessBackend(job_dir=args.job_dir, job_name=f"{subject_id}_detect")
         return HarnessBackend(job_dir=args.job_dir, job_name=f"{subject_id}_{axis}")
 
     dist = episode_score.score_episodes(
         view_, sessions, eps, backend_for, samples=args.samples,
-        alpha=args.alpha, top_ratio=args.top_ratio, gamma=args.gamma, floor=args.floor,
-        label=label)
+        alpha=args.alpha, top_ratio=args.top_ratio, k_defect=args.k_defect,
+        loc_floor=args.loc_floor, exec_floor=args.exec_floor, label=label)
 
     if args.json:
         print(json.dumps(dist.to_json(), indent=2))
@@ -645,7 +652,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pl = sub.add_parser("place", help="place a diff on a reference ladder")
     pl.add_argument("--diff", required=True)
-    pl.add_argument("--axis", required=True, choices=["difficulty", "cleanliness"])
+    pl.add_argument("--axis", required=True, choices=["difficulty"])  # cleanliness is `detect`, not a placement
     pl.add_argument("--backend", default="harness", choices=["harness", "replay"])
     pl.add_argument("--samples", type=int, default=1)
     pl.add_argument("--id", help="subject unit id (replay backend)")
@@ -676,10 +683,12 @@ def build_parser() -> argparse.ArgumentParser:
     vv.add_argument("--alpha", type=float, default=value.DEFAULT_ALPHA, help="volume exponent")
     vv.add_argument("--top-ratio", type=float, default=value.DEFAULT_TOP_RATIO,
                     help="difficulty hardest/median multiple")
-    vv.add_argument("--gamma", type=float, default=value.DEFAULT_GAMMA,
-                    help="cleanliness penalty steepness")
-    vv.add_argument("--floor", type=float, default=value.DEFAULT_FLOOR,
-                    help="cleanliness anti-spam floor")
+    vv.add_argument("--k-defect", type=float, default=value.DEFAULT_K_DEFECT,
+                    help="severe-defect penalty slope")
+    vv.add_argument("--loc-floor", type=int, default=value.DEFAULT_LOC_FLOOR,
+                    help="small-diff smoothing for defect density")
+    vv.add_argument("--exec-floor", type=float, default=value.DEFAULT_EXEC_FLOOR,
+                    help="worst-case cleanliness discount")
     vv.set_defaults(func=_cmd_value)
 
     tg = sub.add_parser("tag", help="tag user messages (move × work-type + purpose) — the why-pass step 2")
@@ -720,10 +729,12 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--alpha", type=float, default=value.DEFAULT_ALPHA, help="volume exponent")
     sc.add_argument("--top-ratio", type=float, default=value.DEFAULT_TOP_RATIO,
                     help="difficulty hardest/median multiple")
-    sc.add_argument("--gamma", type=float, default=value.DEFAULT_GAMMA,
-                    help="cleanliness penalty steepness")
-    sc.add_argument("--floor", type=float, default=value.DEFAULT_FLOOR,
-                    help="cleanliness anti-spam floor")
+    sc.add_argument("--k-defect", type=float, default=value.DEFAULT_K_DEFECT,
+                    help="severe-defect penalty slope")
+    sc.add_argument("--loc-floor", type=int, default=value.DEFAULT_LOC_FLOOR,
+                    help="small-diff smoothing for defect density")
+    sc.add_argument("--exec-floor", type=float, default=value.DEFAULT_EXEC_FLOOR,
+                    help="worst-case cleanliness discount")
     sc.set_defaults(func=_cmd_score)
 
     wy = sub.add_parser("why", help="per-anchor investigation agents over the metrics — the why-pass step 5")

@@ -54,7 +54,7 @@ def render_public_preview(payload: dict) -> str:
         ("achievement total", g["achievement_total"]),
         ("  volume (weighted LOC)", g["volume_loc_total"]),
         ("  difficulty (median rung)", g["difficulty_rung_median"]),
-        ("  cleanliness (median pct)", g["cleanliness_pct_median"]),
+        ("  severe-defect density (median)", g["severe_density_median"]),
         ("normalized tokens total", g["normalized_tokens_total"]),
         ("episodes (scored/total)", f"{g['window']['n_scored']}/{g['window']['n_episodes']}"),
         ("ladder versions", ", ".join(f"{k}:{v}" for k, v in g["ladder_versions"].items())),

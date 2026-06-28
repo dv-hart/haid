@@ -43,7 +43,7 @@ SYMPTOM_KEYS = frozenset({
     # value-fold / cost diagnoses
     "cost.model_overkill",          # low-difficulty work on an expensive tier
     "cost.cache_dominated",         # spend dominated by context re-reads (long sessions)
-    "cleanliness.low",              # messy / over-engineered output
+    "cleanliness.low",              # severe defect(s) detected in the output
 })
 
 MATURITIES = ("official", "community-consensus", "emerging", "contested",

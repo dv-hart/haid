@@ -1,8 +1,10 @@
 # Axis calibration playbook — replicate the difficulty pattern for a new axis
 
 > **Purpose.** A self-contained recipe to calibrate a NEW scoring axis using the
-> architecture validated for **difficulty**. (Worked twice: **cleanliness** earned its
-> place; **originality** was calibrated by this recipe and then **dropped** — it saturated
+> architecture validated for **difficulty**. (Worked twice: **cleanliness** was calibrated
+> this way but its pairwise ladder was later **retired** as non-ordinal — cleanliness is now
+> counted defect density, see [cleanliness-ladder.md](cleanliness-ladder.md);
+> **originality** was calibrated by this recipe and then **dropped** — it saturated
 > and was the least difficulty-distinct axis, so the orthogonality/usefulness gates
 > correctly rejected it. See scoring-rubric.md Axis decision. The recipe is axis-agnostic;
 > the originality prompt in §3 is retained as a worked example.) A fresh session can

@@ -3,8 +3,7 @@
  "benchmark_repo": "dv-hart/haid-benchmark",
  "pinned_haid_version": "0.0.7",
  "ladder_versions": {
-  "difficulty": "38028a6c1e7977f7",
-  "cleanliness": "e175a9e97394d1d4"
+  "difficulty": "38028a6c1e7977f7"
  },
- "combiner_config_hash": "c19b35c05e634436"
+ "combiner_config_hash": "b66afb60a0e39a08"
 }

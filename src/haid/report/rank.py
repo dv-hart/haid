@@ -18,9 +18,10 @@ from importlib import resources
 BOARD_RESOURCE = "benchmark_board.json"
 # live snapshot from the data-only benchmark repo's Pages site (`haid rank --refresh`)
 BOARD_URL = "https://dv-hart.github.io/haid-benchmark/board.json"
-# the axes a row is ranked on; higher is better for all of these
-RANK_AXES = ("value_overall", "achievement_total", "difficulty_rung_median",
-             "cleanliness_pct_median")
+# the axes a row is ranked on; higher is better for all of these. (Cleanliness is NOT here:
+# it is now severe-defect density where LOWER is better, which would invert the percentile
+# semantics rank_against assumes — it stays a coaching signal, not a leaderboard axis.)
+RANK_AXES = ("value_overall", "achievement_total", "difficulty_rung_median")
 
 
 def shipped_board() -> dict:
@@ -78,7 +79,7 @@ def rank_against(board: dict, payload: dict) -> dict:
 
 
 _LABELS = {"value_overall": "overall score", "achievement_total": "achievement",
-           "difficulty_rung_median": "difficulty", "cleanliness_pct_median": "cleanliness"}
+           "difficulty_rung_median": "difficulty"}
 
 
 def render_rank(ranking: dict, payload: dict) -> str:

@@ -22,7 +22,7 @@ Stdlib only.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Record `type` values seen across the real corpus (65 transcripts). Anything outside
 # this set is flagged by the parser as an unknown shape (drift), not dropped.

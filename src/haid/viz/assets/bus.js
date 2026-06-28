@@ -112,7 +112,7 @@ function epBadge(score) {
   if (!score || score.achievement == null) return "";
   const bits = [`ach ${Math.round(score.achievement)}`];
   if (score.difficulty_rung != null) bits.push(`D${(+score.difficulty_rung).toFixed(0)}`);
-  if (score.cleanliness_pct != null) bits.push(`C${Math.round(score.cleanliness_pct * 100)}`);
+  if (score.severe_count != null) bits.push(`${score.severe_count}sev`);
   return "  ◆ " + bits.join(" · ");
 }
 function buildWindow(data) {

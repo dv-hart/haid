@@ -18,7 +18,7 @@ import hashlib
 
 from ..session import records as rec
 from . import bash_read, bash_write, signature as sig
-from .model import Edge, File, Region, SessionGraph, ToolCall, Turn, is_read, is_write
+from .model import Edge, File, Region, SessionGraph, ToolCall, Turn, is_read
 
 _READ = {"Read"}
 _EDIT = {"Edit", "MultiEdit"}

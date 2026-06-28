@@ -41,7 +41,8 @@ def _episode_score(e: dict) -> dict | None:
         "achievement": e.get("achievement"),
         "value": e.get("value"),
         "difficulty_rung": (e.get("difficulty") or {}).get("rung"),
-        "cleanliness_pct": (e.get("cleanliness") or {}).get("percentile"),
+        "severe_count": (e.get("cleanliness") or {}).get("severe_count"),
+        "execution_C": (e.get("cleanliness") or {}).get("execution_C"),
         "normalized_tokens": e.get("normalized_tokens"),
         "has_artifact": e.get("has_artifact", True),
     }

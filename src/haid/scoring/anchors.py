@@ -6,7 +6,9 @@ The ladders + their diff texts are shipped as package data (src/haid/data/), so 
 needs no access to the calibration `out/` tree at runtime.
 
   difficulty  → data/difficulty_anchors.json   (rung 0 easiest .. 8 hardest)
-  cleanliness → data/cleanliness_anchors.json  (rung 0 least clean .. 10 cleanest)
+
+Cleanliness no longer uses a ladder — it is counted defect detection (scoring/defects.py),
+so only difficulty remains a pairwise placement.
 
 The anchor diffs are fixed, so the live backend can prompt-cache them.
 """
@@ -18,7 +20,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.resources import files
 
-AXES = ("difficulty", "cleanliness")
+AXES = ("difficulty",)
 
 
 @dataclass(frozen=True)

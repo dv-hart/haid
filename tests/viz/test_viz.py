@@ -80,7 +80,8 @@ def test_scores_path_is_primary_with_badges():
               "episodes": [
                   {"id": "ep0", "title": "Auth", "session_ids": ["1", "2"],
                    "achievement": 88.2, "value": 6e-7, "difficulty": {"rung": 9.0},
-                   "cleanliness": {"percentile": 0.8}},
+                   "cleanliness": {"severe_count": 1, "changed_lines": 100,
+                                   "by_class": {"dead_code": 1}, "execution_C": 0.77}},
                   {"id": "ep1", "title": "Docs", "session_ids": ["3"]}]}
     b = assemble.assemble_bundle(sessions, scores_doc=scores, label="W")
     assert b["episode_source"] == "scores"
@@ -88,6 +89,7 @@ def test_scores_path_is_primary_with_badges():
     ep0 = b["episodes"][0]
     assert ep0["session_stems"] == ["1", "2"]
     assert ep0["score"]["difficulty_rung"] == 9.0
+    assert ep0["score"]["severe_count"] == 1      # defect profile carried to the viz badge
     assert b["episodes"][1]["score"] is None      # unscored episode → no badge
 
 
