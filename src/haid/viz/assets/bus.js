@@ -559,8 +559,13 @@ function render() {
     const row = e.target.closest("[data-id]");
     if (!row || row.getAttribute("data-exp") !== "1") return;
     const id = row.getAttribute("data-id");
+    // anchor scroll to the toggled row so the view doesn't jump as content above/below changes height
+    const beforeTop = row.getBoundingClientRect().top;
     STATE.exp.has(id) ? STATE.exp.delete(id) : STATE.exp.add(id);
     render();
+    let after = null;
+    stage.querySelectorAll("[data-id]").forEach(n => { if (n.getAttribute("data-id") === id) after = n; });
+    if (after) stage.scrollTop += after.getBoundingClientRect().top - beforeTop;
   };
 
   // temporary debug hook: ?debug=<file name substring> dumps that file's out-lane junctions
