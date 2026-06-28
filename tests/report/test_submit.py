@@ -9,10 +9,12 @@ from haid.report import benchmark, submit
 
 SCORES_DOC = {"window": "w", "episodes": [
     {"id": "ep1", "has_artifact": True, "normalized_tokens": 100.0,
-     "difficulty": {"rung": 8.0, "percentile": 0.89}, "cleanliness": {"percentile": 0.9},
+     "difficulty": {"rung": 8.0, "percentile": 0.89},
+     "cleanliness": {"severe_count": 1, "minor_count": 0, "other_count": 0,
+                     "changed_lines": 100, "by_class": {"dead_code": 1}, "execution_C": 0.77},
      "achievement": 50.0, "value": 0.5,
      "achievement_components": {"volume_loc": 120.0, "volume_term": 11.0,
-                                "difficulty_D": 9.0, "cleanliness_C": 0.81}},
+                                "difficulty_D": 9.0, "cleanliness_C": 0.77}},
 ]}
 
 

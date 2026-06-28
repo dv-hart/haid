@@ -10,6 +10,8 @@ tests/fixtures/**/*.jsonl
 # Raw extracted transcript dumps — contain real (possibly secret) content
 research/_*.json
 /out/
+# local analysis/tuning scratch — never tracked
+/scratchpad/
 /reports/
 *.report.md
 *.report.json

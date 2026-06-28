@@ -23,8 +23,7 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(_ROOT, "src"))
 
 from haid import episodes
-from haid.episodes import grouping, summarize
-from haid.episodes.model import SessionSummary
+from haid.episodes import summarize
 from haid.episodes.segment import (HarnessBackend, HeuristicBackend, PendingSegmentation,
                                     ReplayBackend)
 from haid.intent import TaggedMessage

@@ -7,7 +7,7 @@ import pytest
 from haid import why
 from haid.why.anchors import select_anchors
 from haid.why.investigate import HarnessBackend, PendingInvestigations, validate_note
-from haid.why.prompts import FLAGS, build_anchor_prompt
+from haid.why.prompts import build_anchor_prompt
 
 
 def _inst(metric, rank, tok, scope="window", **refs):

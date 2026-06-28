@@ -8,10 +8,12 @@ from haid.report import benchmark
 
 SCORES_DOC = {"window": "w", "episodes": [
     {"id": "ep1", "has_artifact": True, "normalized_tokens": 100.0,
-     "difficulty": {"rung": 8.0, "percentile": 0.89}, "cleanliness": {"percentile": 0.9},
+     "difficulty": {"rung": 8.0, "percentile": 0.89},
+     "cleanliness": {"severe_count": 1, "minor_count": 0, "other_count": 0,
+                     "changed_lines": 100, "by_class": {"dead_code": 1}, "execution_C": 0.77},
      "achievement": 50.0, "value": 0.5,
      "achievement_components": {"volume_loc": 120.0, "volume_term": 11.0,
-                                "difficulty_D": 9.0, "cleanliness_C": 0.81}},
+                                "difficulty_D": 9.0, "cleanliness_C": 0.77}},
 ]}
 
 
@@ -54,6 +56,14 @@ def test_rejects_stale_versions():
         benchmark.validate_entry(p, expected_user="alice", entry_name="entries/alice.json")
     p = _rehash({**_payload("alice"), "combiner_config_hash": "0000000000000000"})
     with pytest.raises(benchmark.SubmissionRejected, match="combiner_config_hash is stale"):
+        benchmark.validate_entry(p, expected_user="alice", entry_name="entries/alice.json")
+
+
+def test_rejects_unsupported_schema_version():
+    """A pre-defect-model payload (schema 1.1) must be rejected, not silently accepted —
+    the cleanliness-axis change made old submissions incomparable (ADR-0005)."""
+    p = _rehash({**_payload("alice"), "schema_version": "1.1"})
+    with pytest.raises(benchmark.SubmissionRejected, match="unsupported schema_version"):
         benchmark.validate_entry(p, expected_user="alice", entry_name="entries/alice.json")
 
 

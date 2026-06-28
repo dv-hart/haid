@@ -194,9 +194,12 @@ value       = achievement / (normalized_tokens / cost_unit)
                      ("10x engineer"). Bottom/median falls out at ~0.1x automatically.
                      `latent` is the diff's Bradley-Terry score, interpolated from where it
                      placed between the anchors (the anchor `score` field IS the BT latent).
-  C(cleanliness)   = floor + (1 - floor) * p_clean**gamma     gamma = 2, floor = 0.001
-                     penalty-only (tops out at 1.0, never a bonus), steep, with an anti-spam
-                     floor so LOC-padding can never out-pull LOC**alpha.
+  C(cleanliness)   = max(exec_floor, 1 - k_defect * severe / sqrt(max(LOC, loc_floor)))
+                     k_defect = 2.3, loc_floor = 50, exec_floor = 0.6. severe = count of
+                     verified severe defects in the diff (counted-defect density, NOT a
+                     pairwise-ladder percentile — see src/haid/scoring/defects.py). Penalty-
+                     only (1.0 for clean work, never a bonus) and bounded by exec_floor. This
+                     replaced the retired p_clean**gamma ladder penalty.
 ```
 
 **Design decisions, locked with the maintainer (so they read as decisions, not drift):**
@@ -208,14 +211,14 @@ value       = achievement / (normalized_tokens / cost_unit)
 - **Difficulty is convex, driven by the BT latent, not the rung.** Median→top = 10x; the rank
   flattens the tails, the latent (Elo/Bradley-Terry log-odds) keeps the "a pro is ~10x the median,
   not 2x" spread. One knob (`top_ratio`) with a clean interpretation.
-- **Cleanliness is a STEEP, penalty-only multiplier — a *major* axis, ~co-equal to difficulty
-  over real functional code (≈8x span, p 0.35→1.0), plus a 0.001 tail for slop.** This is a
-  deliberate reversal of two earlier sketches: (a) the symmetric `√(diff² + clean²)` norm — dropped
-  because once difficulty went convex/wide the norm geometry collapses the cleanliness leg; and
-  (b) a cleanliness *bonus* (C>1) — dropped because a bonus partially reopens the LOC-spam door.
-  "Top cleanliness is worth a lot" is expressed as *everything below top is heavily penalized*,
-  never as fictional credit. Worked: 8 pristine lines beat 16 lines of `cost_calc` +
-  `cost_calc_enhanced` (p≈0.35 → C≈0.12) by ~6x — the bigger, messier diff *loses*.
+- **Cleanliness is a bounded, penalty-only multiplier driven by counted severe-defect density**
+  (`execution_factor`, `src/haid/scoring/defects.py`): more verified severe defects per √(changed
+  LOC) discount achievement down to `exec_floor`; clean work multiplies by 1.0. It stays
+  penalty-only and never symmetric with difficulty in an L2 norm. *(History: this replaced a steep
+  `p_clean**gamma` pairwise-ladder penalty, retired 2026-06 as non-ordinal — see
+  [cleanliness-ladder.md](cleanliness-ladder.md). Two even earlier sketches were also dropped: (a)
+  the symmetric `√(diff² + clean²)` norm — the convex/wide difficulty leg collapses the geometry;
+  and (b) a cleanliness bonus (C>1) — partially reopens the LOC-spam door.)*
 - **Cost is LINEAR in normalized tokens** (an org pays per token, not per `log(token)`). The
   fixed-exploration-cost penalty on small changes (few lines for many tokens) is acceptable because
   it lands on *value* (efficiency), not on *achievement* — the small clean change keeps its full

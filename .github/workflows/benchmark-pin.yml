@@ -14,7 +14,6 @@ on:
   pull_request:
     paths:
       - "src/haid/data/difficulty_anchors.json"
-      - "src/haid/data/cleanliness_anchors.json"
       - "src/haid/scoring/value.py"
       - "scripts/benchmark_pin.json"
       - "scripts/check_benchmark_pin.py"

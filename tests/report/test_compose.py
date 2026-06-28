@@ -38,15 +38,19 @@ TAGS_DOC = {"window": "w", "messages": (
 SCORES_DOC = {"window": "w", "episodes": [
     {"id": "ep1", "title": "easy big", "has_artifact": True, "normalized_tokens": 9000.0,
      "difficulty": {"rung": 1.0, "percentile": 0.11},
-     "cleanliness": {"percentile": 0.2}, "achievement": 2.0, "value": 0.0002,
+     "cleanliness": {"severe_count": 2, "minor_count": 0, "other_count": 0,
+                     "changed_lines": 400, "by_class": {"error_swallowing": 2},
+                     "execution_C": 0.7}, "achievement": 2.0, "value": 0.0002,
      "achievement_components": {"volume_loc": 400.0, "volume_term": 20.0,
-                                "difficulty_D": 0.1, "cleanliness_C": 0.04},
+                                "difficulty_D": 0.1, "cleanliness_C": 0.7},
      "metrics": {}, "session_ids": ["s1"], "n_sessions": 1, "caveats": []},
     {"id": "ep2", "title": "hard small", "has_artifact": True, "normalized_tokens": 100.0,
      "difficulty": {"rung": 8.0, "percentile": 0.89},
-     "cleanliness": {"percentile": 0.9}, "achievement": 50.0, "value": 0.5,
+     "cleanliness": {"severe_count": 0, "minor_count": 0, "other_count": 0,
+                     "changed_lines": 120, "by_class": {}, "execution_C": 1.0},
+     "achievement": 50.0, "value": 0.5,
      "achievement_components": {"volume_loc": 120.0, "volume_term": 11.0,
-                                "difficulty_D": 9.0, "cleanliness_C": 0.81},
+                                "difficulty_D": 9.0, "cleanliness_C": 1.0},
      "metrics": {}, "session_ids": ["s2"], "n_sessions": 1, "caveats": []},
 ]}
 
@@ -200,7 +204,7 @@ def test_benchmark_payload_deterministic_and_clean():
     assert benchmark.verify(p1)
     assert p1["scores"]["value"]["n"] == 2
     assert p1["scores"]["difficulty_rungs"] == [1.0, 8.0]
-    assert "ladder_versions" in p1 and len(p1["ladder_versions"]) == 2
+    assert "ladder_versions" in p1 and len(p1["ladder_versions"]) == 1   # difficulty only
     # nothing leak-shaped survives
     text = json.dumps(p1)
     assert "session_ids" not in text and "easy big" not in text
@@ -215,7 +219,7 @@ def test_benchmark_row_fields():
     assert p["normalized_tokens_total"] == 9100.0
     assert p["value_overall"] == round(benchmark._value.value_ratio(52.0, 9100.0), 6)  # tot/tot
     assert p["difficulty_rung_median"] == 8.0       # median of [1, 8] (upper)
-    assert p["cleanliness_pct_median"] == 0.9
+    assert p["severe_density_median"] == 0.1         # ep1 2/sqrt(400)=0.1, ep2 0 -> upper median
     # comparability keys present and stable
     assert p["combiner_config_hash"] == benchmark.combiner_config_hash()
     assert p["tool_version"] and "signature" not in p

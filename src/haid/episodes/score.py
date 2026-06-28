@@ -7,7 +7,7 @@ step 3), it produces per episode:
     session sub-stream);
   - **a reconstructed diff + cost** — `bridge.episode_inputs` over the episode's session subset
     (episode-relative baseline + clean summed cost, because we never cut below a session);
-  - **difficulty + cleanliness placement** → `achievement` and `value` (the existing scoring fold).
+  - **difficulty placement + cleanliness defect-detection (detect→verify)** → `achievement` and `value`.
 
 The window is then the **distribution** of those per-episode placements, not one blended number —
 so a project's scaffolding episodes (T0–T1) don't bury the critical 5% (T3–T4); see
@@ -29,12 +29,14 @@ from typing import Callable
 from ..metrics import run_episodes
 from ..scoring import value as _value
 from ..scoring import volume as _volume
-from ..scoring.compare import Backend, PendingComparisons
+from ..scoring.compare import PendingComparisons
+from ..scoring.detect import PendingDetection
 from ..scoring.placement import PlacementResult, place
 from .model import Episode
 
-# A factory the caller supplies: (axis, subject_id) -> a comparison Backend for that placement.
-BackendFor = Callable[[str, str], Backend]
+# A factory the caller supplies: (axis, subject_id) -> a backend for that axis. For "difficulty"
+# it returns a compare.Backend (pairwise placement); for "cleanliness" a detect.DetectBackend.
+BackendFor = Callable[[str, str], object]
 
 
 @dataclass
@@ -46,7 +48,7 @@ class EpisodeScore:
     bridge: object                             # bridge.BridgeResult (diff + cost + caveats)
     metrics: dict = field(default_factory=dict)        # {metric_name: MetricResult} @ episode scope
     difficulty: PlacementResult | None = None
-    cleanliness: PlacementResult | None = None
+    cleanliness: object | None = None          # scoring.defects.DefectResult (post-verify)
     achievement: object | None = None          # value.AchievementResult
     value: object | None = None                # value.ValueResult
     pending: list = field(default_factory=list)        # manifest paths if placement deferred
@@ -118,8 +120,19 @@ class WindowDistribution:
         if s.difficulty:
             out["difficulty"] = {"rung": round(s.difficulty.rung, 2),
                                  "percentile": round(s.difficulty.percentile, 3)}
-        if s.cleanliness:
-            out["cleanliness"] = {"percentile": round(s.cleanliness.percentile, 3)}
+        if s.cleanliness is not None:
+            c = s.cleanliness
+            out["cleanliness"] = {
+                "severe_count": c.severe_count,
+                "minor_count": c.minor_count,
+                "other_count": c.other_count,
+                "changed_lines": c.changed_lines,
+                "by_class": c.by_class(),
+                # the execution multiplier (from achievement when scored); counts only —
+                # the raw findings (verbatim diff snippets) are kept OUT of scores.json.
+                "execution_C": (round(s.achievement.cleanliness_C, 4)
+                                if s.achievement else None),
+            }
         if s.achievement:
             a = s.achievement
             out["achievement"] = round(a.achievement, 4)
@@ -147,7 +160,8 @@ class WindowDistribution:
                 v = s.value_scalar
                 vs = "n/a" if v is None or v != v else f"{v:.4g}"
                 lines.append(f"  {s.id}: value={vs}  achievement={s.achievement.achievement:.3g}"
-                             f"  (D rung={s.difficulty.rung:.1f}, C p={s.cleanliness.percentile:.2f},"
+                             f"  (D rung={s.difficulty.rung:.1f}, "
+                             f"{s.cleanliness.severe_count} severe/{s.cleanliness.changed_lines}LOC,"
                              f" {s.normalized_tokens:.0f} nTok)  — {s.episode.title[:50]}")
         no_art = [s for s in self.scores if not s.has_artifact]
         if no_art:
@@ -166,13 +180,16 @@ def _stem(path: str) -> str:
 
 def score_episodes(view, sessions, episodes, backend_for: BackendFor, *, samples: int = 1,
                    alpha: float = _value.DEFAULT_ALPHA, top_ratio: float = _value.DEFAULT_TOP_RATIO,
-                   gamma: float = _value.DEFAULT_GAMMA, floor: float = _value.DEFAULT_FLOOR,
+                   k_defect: float = _value.DEFAULT_K_DEFECT,
+                   loc_floor: int = _value.DEFAULT_LOC_FLOOR,
+                   exec_floor: float = _value.DEFAULT_EXEC_FLOOR,
                    label: str = "") -> WindowDistribution:
     """Score every episode → a WindowDistribution.
 
-    `backend_for(axis, subject_id)` supplies the comparison backend per placement. A placement
-    that defers (live file-handoff) raises `PendingComparisons`; it is caught and its manifest
-    recorded so all episodes' manifests surface together."""
+    `backend_for("difficulty", id)` supplies a compare.Backend (pairwise placement);
+    `backend_for("cleanliness", id)` a detect.DetectBackend (detect → verify). A leg that
+    defers under the live file-handoff path raises `PendingComparisons` / `PendingDetection`;
+    each is caught and its manifest recorded so all episodes' manifests surface together."""
     from ..bridge import episode_inputs
 
     emetrics = run_episodes(view, episodes)
@@ -189,26 +206,31 @@ def score_episodes(view, sessions, episodes, backend_for: BackendFor, *, samples
             scores.append(EpisodeScore(ep, has_artifact=False, bridge=br, metrics=mets))
             continue
 
+        vol = _volume.measure(diff)                   # measured first: changed_lines feeds detect
         pending: list[str] = []
-        placements: dict[str, PlacementResult] = {}
-        for axis in ("difficulty", "cleanliness"):
-            try:
-                placements[axis] = place(diff, axis, backend_for(axis, ep.id),
-                                         samples=samples, subject_id=ep.id)
-            except PendingComparisons as p:
-                pending.append(p.manifest_path)
 
-        dpl, cpl = placements.get("difficulty"), placements.get("cleanliness")
-        if pending or dpl is None or cpl is None:
+        dpl = None
+        try:
+            dpl = place(diff, "difficulty", backend_for("difficulty", ep.id),
+                        samples=samples, subject_id=ep.id)
+        except PendingComparisons as p:
+            pending.append(p.manifest_path)
+
+        defects = None
+        try:
+            defects = backend_for("cleanliness", ep.id).detect(diff, vol.raw_added)
+        except PendingDetection as p:
+            pending.append(p.manifest_path)
+
+        if pending or dpl is None or defects is None:
             scores.append(EpisodeScore(ep, has_artifact=True, bridge=br, metrics=mets,
-                                       difficulty=dpl, cleanliness=cpl, pending=pending))
+                                       difficulty=dpl, cleanliness=defects, pending=pending))
             continue
 
-        vol = _volume.measure(diff)
-        ach = _value.achievement(vol, dpl, cpl, alpha=alpha, top_ratio=top_ratio,
-                                 gamma=gamma, floor=floor)
+        ach = _value.achievement(vol, dpl, defects, alpha=alpha, top_ratio=top_ratio,
+                                 k_defect=k_defect, loc_floor=loc_floor, exec_floor=exec_floor)
         val = _value.value(ach, br.cost)
         scores.append(EpisodeScore(ep, has_artifact=True, bridge=br, metrics=mets,
-                                   difficulty=dpl, cleanliness=cpl, achievement=ach, value=val))
+                                   difficulty=dpl, cleanliness=defects, achievement=ach, value=val))
 
     return WindowDistribution(label=label, scores=scores)

@@ -93,15 +93,29 @@ def view_of(sessions):
     return WindowView(active_stream=active, timelines=timelines, n_sessions=len(sessions))
 
 
+from haid.scoring.defects import DefectResult
+
+
 class FakeBackend:
-    """Deterministic placement: the subject beats the lower half of the anchors (a mid rung)."""
+    """Deterministic difficulty placement: subject beats the lower half (a mid rung)."""
     def compare_batch(self, subject, anchors, axis):
         k = len(anchors) // 2
         return ["subject"] * k + ["anchor"] * (len(anchors) - k)
 
 
+class FakeDetect:
+    """Deterministic cleanliness detection: `severe` severe defects, post-verify."""
+    def __init__(self, severe=0):
+        self.severe = severe
+
+    def detect(self, diff, changed_lines):
+        findings = [{"defect_class": "error_swallowing", "locator": f"e{i}", "note": "x"}
+                    for i in range(self.severe)]
+        return DefectResult.from_findings(findings, changed_lines)
+
+
 def _backend_for(axis, subject_id):
-    return FakeBackend()
+    return FakeDetect() if axis == "cleanliness" else FakeBackend()
 
 
 def test_scores_an_edit_episode_end_to_end():
@@ -116,6 +130,27 @@ def test_scores_an_edit_episode_end_to_end():
     v = sc.value_scalar
     assert v == v and v > 0                                  # finite, positive
     assert "rereads" in sc.metrics                           # episode-scope metrics attached
+
+
+class DeferringDetect:
+    """A cleanliness backend that defers (live file-handoff not yet fulfilled)."""
+    def detect(self, diff, changed_lines):
+        from haid.scoring.detect import PendingDetection
+        raise PendingDetection("out/jobs/ep1_detect.detect.job.json", phase="detect")
+
+
+def test_deferred_detection_records_pending_and_does_not_score():
+    s = edit_session("20260601", "/proj/foo.py", "a\nb\nc\n", "b", "B")
+    eps = [Episode(id="ep1", title="tweak foo", session_ids=["20260601"])]
+
+    def backend_for(axis, subject_id):
+        return DeferringDetect() if axis == "cleanliness" else FakeBackend()
+
+    dist = episode_score.score_episodes(view_of([s]), [s], eps, backend_for, label="w")
+    [sc] = dist.scores
+    assert sc.has_artifact and sc.pending                      # manifest recorded
+    assert sc.value is None and sc.achievement is None         # not scored while pending
+    assert dist.to_json()["pending_placements"] == 1
 
 
 def test_no_artifact_episode_is_not_scored():

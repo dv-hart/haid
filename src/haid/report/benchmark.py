@@ -20,14 +20,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from importlib import resources
 from pathlib import Path
 
 from .. import __version__
 from ..scoring import value as _value
 
-SCHEMA_VERSION = "1.1"
-SUPPORTED_SCHEMA = frozenset({"1.1"})
+SCHEMA_VERSION = "1.2"            # 1.2: cleanliness is counted-defect density, not ladder pct
+SUPPORTED_SCHEMA = frozenset({"1.2"})
 # exact forbidden key names + the "path" substring; NOT bare "diff" (difficulty_rungs is fine)
 _FORBIDDEN_KEYS = frozenset({"session_ids", "session_id", "title", "caveats", "caveat",
                              "diff", "diffs"})
@@ -42,7 +43,7 @@ def ladder_versions() -> dict:
     installs, or that submitter is falsely rejected as 'stale'. (combiner_config_hash is
     already content-canonical; this gives the ladder hashes the same property.)"""
     out = {}
-    for axis in ("difficulty", "cleanliness"):
+    for axis in ("difficulty",):    # cleanliness no longer uses an anchor ladder (defect counts)
         raw = resources.files("haid.data").joinpath(f"{axis}_anchors.json").read_bytes()
         raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         out[axis] = hashlib.sha256(raw).hexdigest()[:16]
@@ -71,6 +72,15 @@ def _median(xs: list[float]) -> float | None:
     return round(xs[len(xs) // 2], 4)
 
 
+def _severe_density(e: dict) -> float:
+    """Severe-defect density for one scored episode: severe_count / sqrt(max(LOC, loc_floor)) —
+    the same shape execution_factor penalizes. Counts only (privacy-safe; no findings)."""
+    c = e.get("cleanliness") or {}
+    sev = c.get("severe_count", 0) or 0
+    chg = c.get("changed_lines", 0) or 0
+    return round(sev / math.sqrt(max(chg, _value.DEFAULT_LOC_FLOOR)), 4)
+
+
 def build_submission(scores_doc: dict, *, github_username: str, project: str,
                      generated_at: str) -> dict:
     """The v1 self-reported payload from a `haid score --json` document."""
@@ -80,8 +90,7 @@ def build_submission(scores_doc: dict, *, github_username: str, project: str,
     scored = [e for e in eps if e.get("value") is not None]
 
     rungs = sorted(e["difficulty"]["rung"] for e in scored if e.get("difficulty"))
-    cleans = sorted(round(e["cleanliness"]["percentile"], 3) for e in scored
-                    if e.get("cleanliness"))
+    densities = sorted(_severe_density(e) for e in scored if e.get("cleanliness"))
     achievement_total = round(sum(e["achievement"] for e in scored
                                   if e.get("achievement") is not None), 4)
     volume_loc_total = round(sum(e.get("achievement_components", {}).get("volume_loc", 0)
@@ -109,7 +118,7 @@ def build_submission(scores_doc: dict, *, github_username: str, project: str,
         "achievement_total": achievement_total,
         "volume_loc_total": volume_loc_total,
         "difficulty_rung_median": _median(rungs),
-        "cleanliness_pct_median": _median(cleans),
+        "severe_density_median": _median(densities),
         "normalized_tokens_total": ntok_total,
         "value_overall": value_overall,
         # distribution detail (drives the per-axis percentile curves) -----------------
@@ -118,7 +127,7 @@ def build_submission(scores_doc: dict, *, github_username: str, project: str,
             "achievement": _stats([e["achievement"] for e in scored
                                    if e.get("achievement") is not None]),
             "difficulty_rungs": rungs,
-            "cleanliness_percentiles": cleans,
+            "severe_densities": densities,
         },
         "self_reported": True,       # v1 anti-fabrication = the Action's plausibility gate
     }
@@ -170,7 +179,7 @@ class SubmissionRejected(Exception):
 
 _REQUIRED = ("schema_version", "kind", "github_username", "project", "tool_version",
              "ladder_versions", "combiner_config_hash", "window", "achievement_total",
-             "volume_loc_total", "difficulty_rung_median", "cleanliness_pct_median",
+             "volume_loc_total", "difficulty_rung_median", "severe_density_median",
              "normalized_tokens_total", "value_overall", "scores", "self_reported",
              "content_hash")
 
@@ -226,18 +235,18 @@ def _plausible(p: dict) -> None:
     for k in ("achievement_total", "volume_loc_total", "normalized_tokens_total"):
         if p[k] is not None and p[k] < 0:
             raise SubmissionRejected(f"{k} is negative")
-    cm = p["cleanliness_pct_median"]
-    if cm is not None and not (0.0 <= cm <= 1.0):
-        raise SubmissionRejected(f"cleanliness_pct_median {cm} outside [0,1]")
+    sd = p["severe_density_median"]
+    if sd is not None and sd < 0:
+        raise SubmissionRejected(f"severe_density_median {sd} is negative")
     vo, at, nt = p["value_overall"], p["achievement_total"], p["normalized_tokens_total"]
     if vo is not None and nt:
         expected = _value.value_ratio(at, nt)
         if abs(vo - expected) > 1e-4 * max(1.0, abs(expected)):
             raise SubmissionRejected(f"value_overall {vo} != achievement_total/"
                                      f"normalized_tokens ({expected:.6g}) — inconsistent")
-    for r in p.get("scores", {}).get("cleanliness_percentiles", []):
-        if not (0.0 <= r <= 1.0):
-            raise SubmissionRejected(f"cleanliness percentile {r} outside [0,1]")
+    for d in p.get("scores", {}).get("severe_densities", []):
+        if d < 0:
+            raise SubmissionRejected(f"severe density {d} is negative")
 
 
 # The WHITELIST the cross-repo board snapshot may carry: known scalar fields only. Anything
@@ -246,7 +255,7 @@ def _plausible(p: dict) -> None:
 _ROW_STR = ("github_username", "project", "schema_version", "tool_version",
             "combiner_config_hash")
 _ROW_NUM = ("achievement_total", "volume_loc_total", "difficulty_rung_median",
-            "cleanliness_pct_median", "normalized_tokens_total", "value_overall")
+            "severe_density_median", "normalized_tokens_total", "value_overall")
 
 
 def project_row(payload: dict) -> dict:

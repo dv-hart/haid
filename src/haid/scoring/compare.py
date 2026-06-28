@@ -1,9 +1,10 @@
 """Pairwise comparison backends — the model-judgment boundary.
 
-Placement needs one judgment per anchor: "is the session diff MORE difficult / MORE
-clean than this anchor?" That judgment is the ONLY part of scoring a model performs, and
-HAID never makes an in-process API call for it. Two backends implement the same
-interface:
+Placement needs one judgment per anchor: "is the session diff MORE difficult than this
+anchor?" (difficulty is the only pairwise axis — cleanliness is now counted defect
+detection, see scoring/defects.py). That judgment is the ONLY part of scoring a model
+performs, and HAID never makes an in-process API call for it. Two backends implement the
+same interface:
 
   - ReplayBackend  — answers from saved calibration verdicts. No model. Used to prove the
                      runtime placement code reproduces the validated experiment exactly.
@@ -44,18 +45,11 @@ _DIFFICULTY_Q = (
     "one almost anyone could is LOW. IGNORE size (a large change is not automatically "
     "hard) and IGNORE surface sophistication (fancy-looking code is not automatically "
     "hard). Judge difficulty relative to what the task actually requires.")
-_CLEANLINESS_Q = (
-    "ONE axis only: CLEANLINESS = parsimony. Which change achieves its purpose with LESS "
-    "unnecessary complexity — fewer moving parts, less duplication, no bloat — RELATIVE "
-    "to what the task actually requires? Minimal necessary code = HIGH; over-engineered, "
-    "duplicative, or convoluted code that a much smaller change would achieve = LOW. "
-    "IGNORE raw size: a large change that genuinely needs to be large is fine; a small "
-    "change that is still needlessly convoluted is not. Judge parsimony relative to the "
-    "task.")
-
-AXIS_QUESTION = {"difficulty": _DIFFICULTY_Q, "cleanliness": _CLEANLINESS_Q}
+# NOTE: cleanliness is no longer a pairwise axis — it is counted defect detection
+# (scoring/defects.py + scoring/detect.py). This module is difficulty-only.
+AXIS_QUESTION = {"difficulty": _DIFFICULTY_Q}
 # what "winner" means per axis (for human-readable manifests)
-MORE_MEANS = {"difficulty": "harder to produce correctly", "cleanliness": "more parsimonious"}
+MORE_MEANS = {"difficulty": "harder to produce correctly"}
 
 _PREAMBLE = (
     "You are a senior staff engineer judging two anonymized code-change diffs (A and B) "

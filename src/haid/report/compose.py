@@ -41,7 +41,7 @@ MIN_CORRECTIONS = 2          # corrections in window before alignment.correction
 MIN_RE_PROMPTS = 2
 DRIFT_DIRECTIVES_PER_SESSION = 3   # new_directives in ONE session -> drift.multi_topic
 LOW_DIFFICULTY_RUNG = 2.0    # rung <= this AND above-median spend -> cost.model_overkill
-LOW_CLEANLINESS_P = 0.35     # placement percentile <= this -> cleanliness.low
+MIN_SEVERE_DEFECTS = 1       # severe defects in an episode >= this -> cleanliness.low
 
 
 @dataclass
@@ -213,13 +213,15 @@ def _window_findings(tags_doc: dict | None, scores_doc: dict | None,
                     treatments=[{"id": t.id, "title": t.title}
                                 for t in catalog.match(["cost.model_overkill"])]))
             c = e.get("cleanliness", {})
-            if c.get("percentile") is not None and c["percentile"] <= LOW_CLEANLINESS_P:
+            if c.get("severe_count", 0) >= MIN_SEVERE_DEFECTS:
+                prof = ", ".join(f"{k}x{v}" for k, v in c.get("by_class", {}).items()
+                                 if v) or "severe defects"
                 out.append(Finding(
                     id=counter(), source="window_rule",
                     symptoms=["cleanliness.low"],
-                    summary=f"episode {e['id']} placed low on cleanliness "
-                            f"(p{c['percentile']:.2f})",
-                    evidence=f"rule: cleanliness percentile <= {LOW_CLEANLINESS_P}; "
+                    summary=f"episode {e['id']} has {c['severe_count']} severe defect(s) "
+                            f"over {c.get('changed_lines', '?')} changed lines ({prof})",
+                    evidence=f"rule: severe defect count >= {MIN_SEVERE_DEFECTS}; "
                              f"episode: {e.get('title', '')[:60]}",
                     treatments=[{"id": t.id, "title": t.title}
                                 for t in catalog.match(["cleanliness.low"])]))
@@ -309,7 +311,7 @@ def render_digest(d: dict) -> str:
             dd, cc = e.get("difficulty", {}), e.get("cleanliness", {})
             L.append(f"  - {e['id']} · {e.get('title','')[:55]}: value={e['value']:.3g} "
                      f"ach={e.get('achievement','?')} (D rung {dd.get('rung','?')}, "
-                     f"C p{cc.get('percentile','?')}, {e.get('normalized_tokens',0):.0f} nTok)")
+                     f"{cc.get('severe_count','?')} severe, {e.get('normalized_tokens',0):.0f} nTok)")
         L.append("")
     findings = d.get("findings", [])
     bugs = [f for f in findings if f.get("bug")]
@@ -502,7 +504,7 @@ def render_scoreboard(digest: dict) -> str:
         ach = e.get("achievement", "?")
         ach_s = f"{ach:>5.1f}" if isinstance(ach, (int, float)) else f"{ach:>5}"
         L.append(f"    {e['id']} · {e.get('title', '')[:40]:<40} achievement {ach_s} "
-                 f"· D rung {dd.get('rung', '?')} · C p{cc.get('percentile', '?')}")
+                 f"· D rung {dd.get('rung', '?')} · {cc.get('severe_count', '?')} severe")
     return "\n".join(L)
 
 
@@ -553,7 +555,7 @@ def render_report(digest: dict, comp: dict, artifacts: dict | None = None) -> st
 
 _COMMUNITY_LABELS = {"value_overall": "overall score", "achievement_total": "achievement",
                      "difficulty_rung_median": "difficulty",
-                     "cleanliness_pct_median": "cleanliness"}
+                     "severe_density_median": "defect density"}
 
 
 def render_community(community: dict | None) -> str:

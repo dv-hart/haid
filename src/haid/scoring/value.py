@@ -5,7 +5,7 @@ and validated upstream:
 
   - volume    (volume.VolumeResult.weighted_loc)        — deterministic surviving-LOC
   - difficulty (placement.PlacementResult, axis=difficulty) — relative ladder placement
-  - cleanliness(placement.PlacementResult, axis=cleanliness)— relative ladder placement
+  - cleanliness(defects.DefectResult)                       — counted severe-defect density
   - cost      (cost.CostResult.normalized_tokens)        — normalized-token denominator
 
 The agreed model (see docs/scoring-rubric.md "Combining into achievement and value"):
@@ -13,7 +13,8 @@ The agreed model (see docs/scoring-rubric.md "Combining into achievement and val
     achievement = LOC**alpha  *  D(difficulty)  *  C(cleanliness)
     value       = achievement / (normalized_tokens / cost_unit)
 
-where, with knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001), cost_unit (=1e9):
+where, with knobs alpha, top_ratio (=10x), the cleanliness defect-density knobs
+(k_defect/loc_floor/exec_floor), and cost_unit (=1e9):
 
   cost_unit makes `value` human-readable. The denominator is dominated by cache-read
   tokens — every turn re-reads the whole cached context, so a real window accumulates
@@ -25,29 +26,30 @@ where, with knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001), cost_unit
   pinned in combiner_config(), so two users on different units are bucketed apart on the
   benchmark rather than silently mis-ranked (ADR-0005).
 
-and, with the remaining knobs alpha, top_ratio (=10x), gamma (=2), floor (=0.001):
+and, with the remaining knobs alpha, top_ratio (=10x) and the defect-density knobs above:
 
   D(difficulty) = exp( lam * (latent - latent_median) )          # convex, Elo/BT-grounded
                   lam chosen so the hardest end is `top_ratio`x the median ("10x engineer").
                   `latent` is the diff's Bradley-Terry score, interpolated from where it
                   placed between the anchors (the anchor `score` field IS the BT latent).
 
-  C(cleanliness) = floor + (1 - floor) * p_clean ** gamma        # penalty-only, anti-spam
-                  p_clean = the cleanliness placement percentile (0=least clean .. 1=most).
-                  Penalty-only (tops out at 1.0, never a bonus) so it cannot be gamed upward;
-                  the `floor` guarantees LOC-spam can never out-pull LOC**alpha (a maximally
-                  sloppy diff is multiplied by ~0.001).
+  C(cleanliness) = max(exec_floor, 1 - k_defect * severe / sqrt(max(LOC, loc_floor)))
+                  severe = count of verified severe defects in the diff (scoring/defects.py).
+                  Penalty-only (tops out at 1.0 for clean work, never a bonus) and bounded by
+                  `exec_floor` so cleanliness can sting but never dominate the score. Replaced
+                  the pairwise cleanliness ladder, which was non-ordinal (see defects.py).
 
-NOTHING is collapsed: the result keeps every component (volume, latent, D, p_clean, C, cost)
+NOTHING is collapsed: the result keeps every component (volume, latent, D, severe_count, C, cost)
 so the diagnosis router can key off *which* term is bad, not just the scalar.
 
 Design decisions (locked with the maintainer, 2026-06-06):
   - alpha < 1: diminishing returns on raw volume.
   - difficulty is convex (BT latent), top/median = 10x. Bottom/median falls out at ~0.1x.
-  - cleanliness is a STEEP, penalty-only multiplier (a major axis, ~co-equal to difficulty
-    over real functional code), NOT the minor modifier first sketched, and NOT symmetric
-    with difficulty in an L2 norm. The earlier symmetric-norm + cleanliness-bonus idea was
-    dropped on purpose.
+  - cleanliness is a penalty-only multiplier, NOT symmetric with difficulty in an L2 norm.
+    The earlier symmetric-norm + cleanliness-bonus idea was dropped on purpose. (History:
+    cleanliness was originally a steep p**gamma pairwise-ladder penalty; it was retired for
+    counted severe-defect density in 2026-06 — non-ordinal ladder, see defects.py — and is
+    now a bounded discount via execution_factor(), not a co-equal squared multiplier.)
   - cost is LINEAR in normalized tokens (an org pays per token); the small-change "fixed
     exploration cost" penalty is acceptable because it lands on VALUE, not achievement.
 
@@ -60,27 +62,43 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .anchors import Ladder, load_ladder
 from .placement import PlacementResult
 
+if TYPE_CHECKING:                       # annotation-only; defects has no runtime use here
+    from .defects import DefectResult
+
 # --- knobs (all overridable per call) --------------------------------------------------
 DEFAULT_ALPHA = 0.5         # volume exponent: diminishing returns (sqrt)
 DEFAULT_TOP_RATIO = 10.0    # difficulty: hardest-end worth vs median ("10x engineer")
-DEFAULT_GAMMA = 2.0         # cleanliness penalty steepness
-DEFAULT_FLOOR = 0.001       # cleanliness floor: anti-LOC-spam guard
 DEFAULT_COST_UNIT = 1e9     # value denominator unit: achievement per BILLION nTok (GnTok)
+
+# --- cleanliness-as-defect-density knobs (the ladder replacement; see scoring/defects.py)
+# execution_factor = max(EXEC_FLOOR, 1 - K_DEFECT * severe_count / sqrt(max(changed_lines, LOC_FLOOR)))
+# The denominator is sqrt(LOC), NOT LOC: severe-defect COUNT scales sub-linearly with size (a
+# 5k-line project does not have 5k severe defects), so dividing by full LOC washes the signal out
+# of big projects and forces an absurd k that then floors any small diff with one defect. sqrt gives
+# big work only sub-linear tolerance, so the COUNT drives the penalty and a riddled large project
+# still bites. Tuned empirically against real diffs (tools/tune_execution_factor.py).
+DEFAULT_K_DEFECT = 2.3      # how hard severe defects bite (slope on severe / sqrt(LOC))
+DEFAULT_LOC_FLOOR = 50      # small-diff smoothing: one defect in a tiny diff isn't auto-floored
+DEFAULT_EXEC_FLOOR = 0.6    # worst-case execution discount (bounded so cleanliness is never dominant)
 
 
 def combiner_config(*, alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
-                    gamma: float = DEFAULT_GAMMA, floor: float = DEFAULT_FLOOR,
+                    k_defect: float = DEFAULT_K_DEFECT, loc_floor: int = DEFAULT_LOC_FLOOR,
+                    exec_floor: float = DEFAULT_EXEC_FLOOR,
                     cost_unit: float = DEFAULT_COST_UNIT) -> dict:
     """The combiner knobs that fold the axes into `value`. Single source of truth for the
     combiner-config hash: two users on the same ladders but different knobs (or a different
     `cost_unit`, which rescales the value magnitude everyone is ranked on) are NOT
-    comparable, so the benchmark payload pins these (ADR-0005)."""
-    return {"alpha": alpha, "top_ratio": top_ratio, "gamma": gamma, "floor": floor,
-            "cost_unit": cost_unit}
+    comparable, so the benchmark payload pins these (ADR-0005). The cleanliness knobs are the
+    defect-density ones (k_defect/loc_floor/exec_floor) — gamma/floor of the retired pairwise
+    ladder no longer affect the score."""
+    return {"alpha": alpha, "top_ratio": top_ratio, "k_defect": k_defect,
+            "loc_floor": loc_floor, "exec_floor": exec_floor, "cost_unit": cost_unit}
 
 
 @dataclass(frozen=True)
@@ -106,20 +124,22 @@ class AchievementResult:
     difficulty_latent: float
     lam: float
     top_ratio: float
-    # cleanliness leg
-    cleanliness_pct: float
-    cleanliness_C: float
-    gamma: float
-    floor: float
+    # cleanliness leg (counted-defect density; see scoring/defects.py)
+    cleanliness_C: float                  # the execution_factor multiplier applied
+    floor: float                          # the execution floor used
+    cleanliness_mode: str = "defects"
+    severe_count: int = 0
+    changed_lines: int = 0
 
     def summary(self) -> str:
+        clean = (f"  cleanliness: {self.severe_count} severe / {self.changed_lines} chg LOC "
+                 f"-> C={self.cleanliness_C:.3g} (defect-density, floor={self.floor:g})")
         return (f"achievement={self.achievement:.3g}\n"
                 f"  volume:      LOC={self.volume_loc:.1f} ^{self.alpha:g} "
                 f"-> {self.volume_term:.3g}\n"
                 f"  difficulty:  latent={self.difficulty_latent:+.2f} "
                 f"-> D={self.difficulty_D:.3g} (top/median={self.top_ratio:g}x)\n"
-                f"  cleanliness: p={self.cleanliness_pct:.2f} "
-                f"-> C={self.cleanliness_C:.3g} (gamma={self.gamma:g}, floor={self.floor:g})")
+                + clean)
 
 
 @dataclass(frozen=True)
@@ -195,37 +215,63 @@ def difficulty_worth(pl: PlacementResult, ladder: Ladder | None = None, *,
                            top_ratio=top_ratio)
 
 
-# --- cleanliness: steep, penalty-only multiplier with an anti-spam floor ----------------
-def cleanliness_factor(pl: PlacementResult, *, gamma: float = DEFAULT_GAMMA,
-                       floor: float = DEFAULT_FLOOR) -> float:
-    """C = floor + (1-floor) * p**gamma. p=1 (pristine) -> 1.0; p=0 (slop) -> floor."""
-    p = pl.percentile
-    if p != p:  # nan
-        return float("nan")
-    p = min(max(p, 0.0), 1.0)
-    return floor + (1.0 - floor) * (p ** gamma)
+# --- cleanliness as a counted-defect DENSITY penalty (the ladder replacement) -----------
+def execution_factor(severe_count: int, changed_lines: int, *,
+                     k: float = DEFAULT_K_DEFECT, loc_floor: int = DEFAULT_LOC_FLOOR,
+                     floor: float = DEFAULT_EXEC_FLOOR) -> float:
+    """Bounded, orthogonal-to-difficulty execution discount from counted severe defects.
+
+        density = severe_count / sqrt(max(changed_lines, loc_floor))
+        factor  = max(floor, 1 - k * density)
+
+    The denominator is sqrt(LOC), not LOC. Severe-defect COUNT scales sub-linearly with
+    size, so the size tolerance must too: dividing by full LOC makes the per-defect cost
+    inversely proportional to size — a big project washes out (10 defects in 2000 lines would
+    score better than 1 defect in 30) and the only way to make it bite is a k so large it
+    floors any small diff. sqrt fixes this: COUNT drives the penalty, size buys only
+    sub-linear slack, so a lone defect in a big file is gentle while a riddled large project
+    still hits the floor. (This deliberately drops strict 2x/2x scale-invariance in favor of
+    'more defects always hurt more'.) `loc_floor` keeps one defect in a tiny diff off the
+    floor; `floor` bounds the worst case so cleanliness is a discount, never dominant.
+
+    0 severe defects -> 1.0 (no penalty). Only SEVERE defects enter here; minors are
+    coaching color (weight 0). See scoring/defects.py for how the counts are produced."""
+    if severe_count < 0:
+        raise ValueError("severe_count must be >= 0")
+    denom = max(int(changed_lines), int(loc_floor))
+    if denom <= 0:                      # empty diff: nothing to penalize
+        return 1.0
+    density = severe_count / math.sqrt(denom)
+    return max(floor, 1.0 - k * density)
 
 
 # --- the fold ---------------------------------------------------------------------------
-def achievement(volume, difficulty_pl: PlacementResult, cleanliness_pl: PlacementResult, *,
+def achievement(volume, difficulty_pl: PlacementResult, cleanliness: DefectResult, *,
                 alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
-                gamma: float = DEFAULT_GAMMA, floor: float = DEFAULT_FLOOR,
-                difficulty_ladder: Ladder | None = None) -> AchievementResult:
+                difficulty_ladder: Ladder | None = None,
+                k_defect: float = DEFAULT_K_DEFECT, loc_floor: int = DEFAULT_LOC_FLOOR,
+                exec_floor: float = DEFAULT_EXEC_FLOOR) -> AchievementResult:
     """achievement = weighted_loc**alpha * D(difficulty) * C(cleanliness).
 
     `volume` is a volume.VolumeResult (uses .weighted_loc) or a bare float LOC.
+    `cleanliness` is a defects.DefectResult; C = execution_factor over its severe-defect
+    density (the counted-defect model that replaced the pairwise cleanliness ladder).
+    Difficulty is still a pairwise placement.
     """
     loc = getattr(volume, "weighted_loc", volume)
     loc = max(float(loc), 0.0)
     dw = difficulty_worth(difficulty_pl, difficulty_ladder, top_ratio=top_ratio)
-    C = cleanliness_factor(cleanliness_pl, gamma=gamma, floor=floor)
     vol_term = loc ** alpha
+    C = execution_factor(cleanliness.severe_count, cleanliness.changed_lines,
+                         k=k_defect, loc_floor=loc_floor, floor=exec_floor)
     ach = vol_term * dw.D * C
     return AchievementResult(
         achievement=ach,
         volume_loc=loc, alpha=alpha, volume_term=vol_term,
         difficulty_D=dw.D, difficulty_latent=dw.latent, lam=dw.lam, top_ratio=top_ratio,
-        cleanliness_pct=cleanliness_pl.percentile, cleanliness_C=C, gamma=gamma, floor=floor,
+        cleanliness_C=C, floor=exec_floor,
+        cleanliness_mode="defects", severe_count=cleanliness.severe_count,
+        changed_lines=cleanliness.changed_lines,
     )
 
 
@@ -253,24 +299,3 @@ def value(ach: AchievementResult, cost, *, cost_unit: float = DEFAULT_COST_UNIT)
         breakdown = {"by_type": cost.by_type, "by_tier": cost.by_tier}
     return ValueResult(value=v, normalized_tokens=ntok, achievement=ach,
                        cost_unit=cost_unit, cost_breakdown=breakdown)
-
-
-def score(diff: str, difficulty_backend, cleanliness_backend, cost_result, *,
-          samples: int = 1, alpha: float = DEFAULT_ALPHA,
-          top_ratio: float = DEFAULT_TOP_RATIO, gamma: float = DEFAULT_GAMMA,
-          floor: float = DEFAULT_FLOOR, cost_unit: float = DEFAULT_COST_UNIT) -> ValueResult:
-    """End-to-end convenience: measure volume, place both axes, fold into value.
-
-    Backends are supplied per axis (they may be the same object). Cost is passed in already
-    measured (cost.measure(...)), since usage extraction is upstream. Placement may raise
-    compare.PendingComparisons under the live HarnessBackend file-handoff path.
-    """
-    from . import volume as _volume
-    from .placement import place
-
-    vol = _volume.measure(diff)
-    dpl = place(diff, "difficulty", difficulty_backend, samples=samples)
-    cpl = place(diff, "cleanliness", cleanliness_backend, samples=samples)
-    ach = achievement(vol, dpl, cpl, alpha=alpha, top_ratio=top_ratio,
-                      gamma=gamma, floor=floor)
-    return value(ach, cost_result, cost_unit=cost_unit)

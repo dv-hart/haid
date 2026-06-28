@@ -19,7 +19,7 @@ own) are not yet observed; deferred (open-questions V3). Stdlib only.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .parse import ParseResult, parse_file

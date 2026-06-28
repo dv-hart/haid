@@ -4,8 +4,6 @@ Deterministic, model-free. The detector turns tagged messages + the window's edi
 into bug anchors; the why-pass then dispatches them to the bug-attribution prompt/schema.
 """
 
-import json
-
 import pytest
 
 from haid import why

@@ -37,7 +37,7 @@ stop — that's a bug. Read `prompt`, attach `schema`, spawn, collect. Nothing e
 haid metrics ─┐  (no model)                                ┌─► haid report ──► opus × 1 ──► final report
 haid tag ─────┤  haiku × 1/session-branch     labels       │
 haid episodes ┤  haiku × 1 (optional)        grouping   ───┼─► haid viz  (no model) ──► out/report/haid-viz.html
-haid score ───┤  haiku × ~9-11/episode/axis  verdicts      │
+haid score ───┤  haiku: ~9-11 pairwise/ep (difficulty) + 1 detect +0-N verify (cleanliness) │
 haid why ─────┘  sonnet × waste anchors + bug attribution (uses tags)  └─► haid benchmark (opt-in only)
 ```
 
@@ -177,53 +177,66 @@ haid score --project P --days N --labels out/jobs/tag.labels.json --json
            [--grouping out/jobs/episodes.grouping.json]
 ```
 
-Exit 3 writes one manifest **per episode per axis**:
-`out/jobs/<episode>_<axis>.job.json`. Each contains `comparisons[]` (one fully-built
-pairwise prompt each), a `schema` for the verdict, and a `fingerprint`.
+The two axes are scored differently. **Difficulty** is still a pairwise placement (one
+manifest of `comparisons[]` per episode). **Cleanliness** is counted defect detection, run in
+**two phases**: a `detect` pass (one cataloguing job over the episode diff) then, only for
+episodes that surfaced severe defects, a `verify` pass (one adversarial refuter per severe
+finding). So exit 3 can write three manifest kinds:
 
-This is the **one heavy fan-out** in the chain (~28 manifests × ~10 comparisons ≈ 280
-judges, each prompt carrying two inlined diffs). Don't inline 280 big prompts into your
-context or marshal them through args — both blow up. Use the committed, deterministic
-pipeline instead; you **author nothing**:
+- `out/jobs/<ep>_difficulty.job.json` — pairwise (`comparisons[]`)
+- `out/jobs/<ep>_detect.detect.job.json` — defect detection (single `prompt`)
+- `out/jobs/<ep>_detect.verify.job.json` — defect verification (`verifications[]`)
+
+Each carries its own `schema` and `fingerprint`. This is the chain's **one heavy fan-out**;
+don't inline the prompts (diffs inlined) into your context or args — use the committed,
+deterministic pipeline; you **author nothing**:
 
 1. **Split mechanically** (keeps every diff out of your context). Capture stdout with the
    Bash tool (UTF-8, no BOM — see the redirection gotcha):
    ```
    python .claude/skills/haid-report/scripts/split_score_manifests.py --job-dir out/jobs
    ```
-   It writes one prompt file per comparison under `out/jobs/score_split/` and prints the
-   tiny `args` object: `{"base": ..., "manifests": [{manifest, n, fingerprint}, ...]}`.
-2. **Fan out with the committed workflow** — pass that object straight through (as a JSON
-   value, not a string; the script normalizes either way):
+   It writes one prompt file per job under `out/jobs/score_split/` and prints the tiny `args`
+   object: `{"base": ..., "manifests": [{manifest, kind, n, fingerprint, schema}, ...]}` where
+   `kind` is `pairwise` | `detect` | `verify`.
+2. **Fan out with the committed workflow** — pass that object straight through (a JSON value,
+   not a string; the script normalizes either way):
    ```
    Workflow({ scriptPath: ".claude/workflows/haid-judge.js", args: <the splitter's object> })
    ```
-   It spawns **one independent haiku judge per comparison** (reads exactly its one file, no
-   other), and returns `[{manifest, fingerprint, winners, complete}]` with `winners` in
-   comparison order.
-3. **Write verdicts** for each returned group where `complete` is `true`:
-   `out/jobs/<manifest>.verdicts.json` = `{"fingerprint": <from the group>, "winners":
-   [...]}` — nothing else. A group with `complete: false` had a judge die (null winner) —
-   re-run the workflow before writing; **never** write a null or short `winners` list.
+   It spawns **one independent haiku judge per job** (each reads exactly its one file, using
+   the manifest's own schema), and returns one group per manifest carrying `kind`,
+   `fingerprint`, `complete`, and the kind's answers.
+3. **Write the answers file** for each returned group where `complete` is `true` — the
+   filename suffix and payload key depend on `kind`:
+   - `pairwise` → `out/jobs/<manifest>.verdicts.json` = `{"fingerprint": …, "winners": [...]}`
+   - `verify`  → `out/jobs/<manifest>.verdicts.json` = `{"fingerprint": …, "verdicts": [...]}`
+   - `detect`  → `out/jobs/<manifest>.findings.json` = `{"fingerprint": …, "findings": [...]}`
+   (the `<manifest>` stem already includes the `.detect`/`.verify` segment). A group with
+   `complete: false` had a judge die — re-run the workflow before writing; **never** write a
+   null/short list.
+4. **Re-run `haid score`.** The detect answers let it build each episode's `DefectResult`; for
+   episodes with ≥1 severe defect it now pends a `verify` manifest. Repeat steps 1–3 for those,
+   then re-run once more to finish. (Clean episodes need no verify pass.) So the score step is
+   a **detect → re-run → verify → re-run** cycle, not a single pass.
 
-Why a workflow *here* and direct `Agent` calls everywhere else: score is the only step
-heavy enough that keeping the prompts on disk (judges `Read` one file) beats inlining. The
-judge still sees exactly one comparison and nothing else, so the calibrated counterbalancing
-and per-verdict isolation are preserved — it is **not** a license to read files in any other
-step.
+Why a workflow *here* and direct `Agent` calls everywhere else: score is the only step heavy
+enough that keeping prompts on disk (judges `Read` one file) beats inlining. Each judge still
+sees exactly one self-contained job — pairwise counterbalancing and per-finding verification
+isolation are preserved — it is **not** a license to read files in any other step.
 
 Notes that matter here:
-- Which side is the subject is deliberately hidden (deterministic counterbalancing baked
-  into the prompt text only). Don't try to infer or normalize it — just relay the raw
-  A/B/tie answers in order.
-- The fingerprint is the staleness guard. If a re-run fails with "stale verdicts", the
-  manifest was regenerated since the answers were written: delete that verdicts file and
-  re-judge from the fresh manifest. Never hand-edit a fingerprint.
-- Wrong count or a value outside A/B/tie fails loudly by design — fix the answers, don't
-  pad them.
+- Pairwise: which side is the subject is deliberately hidden (counterbalancing baked into the
+  prompt). Just relay the raw A/B/tie answers in order.
+- Detect/verify: relay the structured `findings`/`verdict` exactly; severity is assigned by
+  haid on read-back (the judge only classifies + locates / confirms-or-refutes).
+- The fingerprint is the staleness guard. "stale" on re-run means the manifest was regenerated
+  since the answers were written: delete that answers file and re-judge. Never hand-edit it.
+- Wrong count/shape fails loudly by design — fix the answers, don't pad them.
 
-Re-run and save stdout → `out/report/scores.json`. Typical cost: ~9–11 judgments per
-episode per axis, two axes (difficulty, cleanliness).
+Save the final stdout → `out/report/scores.json`. Cost: ~9–11 pairwise judgments per episode
+for difficulty; cleanliness is far cheaper — 1 detect job per episode plus 0–N verify jobs
+(only for severe findings), versus the old ~10 pairwise cleanliness judgments per episode.
 
 ### 5. Why — investigate the top waste anchors AND attribute every bug fix
 
