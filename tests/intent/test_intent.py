@@ -233,7 +233,8 @@ def test_session_jobs_one_branch_marks_every_message():
     assert len(jobs) == 1                              # one branch → one agent job
     j = jobs[0]
     assert j.targets == ["u1", "u2"]                   # both messages labeled in this job
-    assert "uuid: u1 <<<" in j.transcript and "uuid: u2 <<<" in j.transcript
+    assert j.target_refs == ["u1", "u2"]               # short test ids are their own ref
+    assert "ref: u1 <<<" in j.transcript and "ref: u2 <<<" in j.transcript
     assert "AGENT: Done — wrote foo()." in j.transcript
 
 
@@ -260,14 +261,33 @@ def test_harness_writes_manifest_and_raises(tmp_path):
         manifest = json.load(open(p.manifest_path, encoding="utf-8"))
     assert manifest["task"] == "classify_messages" and len(manifest["jobs"]) == 1
     job = manifest["jobs"][0]
-    assert job["targets"] == ["u1", "u2"] and job["n_targets"] == 2
+    assert job["targets"] == [{"uuid": "u1", "ref": "u1"}, {"uuid": "u2", "ref": "u2"}]
+    assert job["n_targets"] == 2
     assert "AXIS A — conversational move" in job["prompt"]
     assert manifest["schema"]["required"] == ["labels"]
     assert manifest["schema"]["properties"]["labels"]["items"]["required"] == \
-        ["uuid", "move", "work_type", "purpose"]
+        ["ref", "move", "work_type", "purpose"]
 
 
-def test_harness_reads_back_labels(tmp_path):
+def test_harness_reads_back_answers_and_authors_canonical(tmp_path):
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    job_dir = tmp_path / "jobs"
+    job_dir.mkdir()
+    # agents emit ref-keyed answers; the CLI expands refs and writes the uuid-keyed canonical
+    (job_dir / "tag.answers.json").write_text(json.dumps({"labels": [
+        {"ref": "u1", "move": "new_directive", "work_type": "implementation", "purpose": "p1"},
+        {"ref": "u2", "move": "refinement", "work_type": "implementation", "purpose": "p2"},
+    ]}), encoding="utf-8")
+    tagged = intent.tag_window(None, [s], HarnessBackend(job_dir=str(job_dir)))
+    assert [t.move for t in tagged] == ["new_directive", "refinement"]
+    canon = json.load(open(job_dir / "tag.labels.json", encoding="utf-8"))
+    assert {r["uuid"] for r in canon["labels"]} == {"u1", "u2"}   # canonical is uuid-keyed
+    assert all("ref" not in r for r in canon["labels"])           # the ref never leaks downstream
+
+
+def test_harness_resumes_from_canonical_uuid_file(tmp_path):
+    """A canonical (uuid-keyed) labels file with no answers beside it still folds back —
+    resume idempotency and backward-compat with pre-ref runs."""
     s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
     job_dir = tmp_path / "jobs"
     job_dir.mkdir()
@@ -283,14 +303,43 @@ def test_harness_reads_back_rejects_coverage_gap(tmp_path):
     s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
     job_dir = tmp_path / "jobs"
     job_dir.mkdir()
-    (job_dir / "tag.labels.json").write_text(json.dumps({"labels": [   # u2 missing
-        {"uuid": "u1", "move": "new_directive", "work_type": "implementation", "purpose": "p1"},
+    (job_dir / "tag.answers.json").write_text(json.dumps({"labels": [   # u2's ref missing
+        {"ref": "u1", "move": "new_directive", "work_type": "implementation", "purpose": "p1"},
     ]}), encoding="utf-8")
     try:
         intent.tag_window(None, [s], HarnessBackend(job_dir=str(job_dir)))
         assert False, "expected a loud coverage error"
     except ValueError as e:
         assert "missing" in str(e)
+
+
+def test_harness_rejects_unknown_ref(tmp_path):
+    s = FakeSession("/x/aaaaaaaa.jsonl", two_message_convo())
+    job_dir = tmp_path / "jobs"
+    job_dir.mkdir()
+    (job_dir / "tag.answers.json").write_text(json.dumps({"labels": [
+        {"ref": "u1", "move": "new_directive", "work_type": "implementation", "purpose": "p1"},
+        {"ref": "XX", "move": "refinement", "work_type": "implementation", "purpose": "p2"},
+    ]}), encoding="utf-8")
+    try:
+        intent.tag_window(None, [s], HarnessBackend(job_dir=str(job_dir)))
+        assert False, "expected a loud error on the unknown ref"
+    except ValueError as e:
+        assert "unknown" in str(e) and "missing" in str(e)
+
+
+# --- ref derivation ---------------------------------------------------------------------
+def test_refs_default_to_last_six():
+    u = "abcdef12-3456-7890-abcd-ef1234567890"
+    assert msgmod._compute_refs([u]) == {u: "567890"}
+
+
+def test_refs_extend_uniformly_on_suffix_collision():
+    a = "11111111-1111-1111-1111-000000abcdef"   # last 6 == "abcdef"
+    b = "22222222-2222-2222-2222-000001abcdef"   # last 6 == "abcdef" → collide at length 6
+    refs = msgmod._compute_refs([a, b])
+    assert refs[a] != refs[b] and len(set(refs.values())) == 2
+    assert all(len(v) == 7 for v in refs.values())   # whole window steps up 6 → 7
 
 
 if __name__ == "__main__":

@@ -109,7 +109,7 @@ body[data-theme="light"] { --badge:#cf222e; }
 body[data-theme="dark"] { --badge:#f85149; }
 body[data-theme="blueprint"] { --badge:#ff7a85; }
 
-footer.legend { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+footer.legend { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;
   background: var(--panel); border: 1px solid var(--strong); border-radius: 8px; padding: 7px 14px;
   font-size: 11px; color: var(--dim); pointer-events: none; white-space: nowrap; }
 footer.legend b { color: var(--ink); }
