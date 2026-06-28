@@ -43,20 +43,55 @@ const judged = await parallel(items.map(it => () =>
   ).then(r => ({ manifest: it.manifest, k: it.k, result: r }))
 ))
 
-// Fold per manifest, in job order, shaped by kind. A dead judge surfaces as a null result; the
-// caller must re-judge that manifest, never write an answers file with a null/short list (haid
-// validates shape + count on read-back and fails loudly).
+// The `schema` option asks the harness to force a StructuredOutput tool call and return a
+// validated object — but a custom `agentType` only gets that as an *appended instruction*, not a
+// hard constraint, so haiku routinely ignores it and emits fenced/inline JSON as its final text.
+// In that case agent() returns the raw string, not an object. Accept BOTH: when forcing fires,
+// `coerce` is a no-op passthrough; when it doesn't, we extract the last complete JSON object from
+// the reply — the "tolerant extraction" runner rule the skill mandates. This makes the workflow
+// independent of whether forcing succeeds in a given harness.
+function lastJsonObject(text) {
+  if (typeof text !== 'string') return null
+  let depth = 0, start = -1, inStr = false, esc = false, best = null
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue }
+    if (c === '"') inStr = true
+    else if (c === '{') { if (depth === 0) start = i; depth++ }
+    else if (c === '}' && depth > 0 && --depth === 0 && start >= 0) best = text.slice(start, i + 1)
+  }
+  if (best === null) return null
+  try { return JSON.parse(best) } catch (e) { return null }
+}
+const coerce = r => r == null ? null : (typeof r === 'object' ? r : lastJsonObject(r))
+// Validate SHAPE only (not values): empty `findings` is legitimate for a clean diff, and haid
+// does authoritative value-validation on read-back (winner enum, counts, fingerprint). A parse
+// miss must fail the shape check so it surfaces as a dead judge — re-judged — never a silent null
+// that still reports complete:true.
+function validShape(o, kind) {
+  if (o == null || typeof o !== 'object') return false
+  if (kind === 'detect') return Array.isArray(o.findings)
+  if (kind === 'verify') return typeof o.verdict === 'string'
+  return typeof o.winner === 'string' // pairwise
+}
+
+// Fold per manifest, in job order, shaped by kind. A dead judge OR an unparseable reply surfaces
+// as an incomplete group; the caller must re-judge that manifest, never write an answers file
+// with a null/short list (haid validates shape + count on read-back and fails loudly).
 return manifests.map(m => {
   const rows = judged.filter(r => r && r.manifest === m.manifest).sort((a, b) => a.k - b.k)
-  const ok = rows.length === m.n && rows.every(r => r.result != null)
+                     .map(r => ({ ...r, parsed: coerce(r.result) }))
+  const bad = rows.filter(r => !validShape(r.parsed, m.kind)).map(r => r.k)
+  const ok = rows.length === m.n && bad.length === 0
+  if (!ok) log(`${m.manifest}: incomplete (${rows.length}/${m.n} returned, unparseable jobs: [${bad}])`)
   const out = { manifest: m.manifest, kind: m.kind, fingerprint: m.fingerprint, complete: ok }
   if (m.kind === 'detect') {
     // n === 1: the single job's structured output is {findings:[...]}
-    out.findings = ok ? (rows[0].result.findings || []) : null
+    out.findings = ok ? (rows[0].parsed.findings || []) : null
   } else if (m.kind === 'verify') {
-    out.verdicts = ok ? rows.map(r => ({ verdict: r.result.verdict, reason: r.result.reason })) : null
+    out.verdicts = ok ? rows.map(r => ({ verdict: r.parsed.verdict, reason: r.parsed.reason })) : null
   } else {
-    out.winners = ok ? rows.map(r => r.result.winner) : null
+    out.winners = ok ? rows.map(r => r.parsed.winner) : null
   }
   return out
 })
