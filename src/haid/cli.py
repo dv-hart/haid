@@ -269,10 +269,11 @@ def _cmd_tag(args) -> int:
     except intent.PendingClassifications as p:
         print(f"{p.n_jobs} classification job(s) — one haiku subagent per session branch.\n"
               f"Each job in {p.manifest_path} carries a branch transcript; the agent returns a "
-              "`labels` array (one entry per marked message, echoing its uuid).\n"
-              f"Aggregate every job's labels into:  {args.job_dir}/tag.labels.json "
-              '({"labels": [{"uuid":…, "move":…, "work_type":…, "impl_kind":…, "purpose":…}, …]}),'
-              " then re-run.")
+              "`labels` array (one entry per marked message, echoing its short `ref` from the "
+              "CLASSIFY marker — NOT the full uuid).\n"
+              f"Concatenate every job's array into:  {args.job_dir}/tag.answers.json "
+              '({"labels": [{"ref":…, "move":…, "work_type":…, "impl_kind":…, "purpose":…}, …]}),'
+              " then re-run — the CLI expands refs → uuids and writes tag.labels.json itself.")
         return 3
 
     if args.json:
