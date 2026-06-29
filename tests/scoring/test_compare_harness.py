@@ -15,13 +15,26 @@ import json
 
 import pytest
 
-from haid.scoring.compare import (CompareItem, HarnessBackend, PendingComparisons,
-                                  _flip)
+from haid.scoring.compare import (VERDICT_SCHEMA, CompareItem, HarnessBackend,
+                                  PendingComparisons, _flip, build_pair_prompt)
 
 SUBJECT = CompareItem(diff="--- a/s.py\n+++ b/s.py\n+SUBJECT-MARKER unique payload\n")
 ANCHORS = [CompareItem(diff=f"--- a/x{i}.py\n+++ b/x{i}.py\n+anchor body {i}\n",
                        id=f"anc{i}") for i in range(12)]
 AXIS = "difficulty"
+
+
+def test_verdict_schema_is_reasoning_first():
+    """`reason` MUST precede `winner` (schema order = generation order). A decoder can't let
+    tokens after `winner` change it, so an answer-first schema makes the reason post-hoc and
+    measurably degrades the judgment; keep reason first so it conditions the verdict. The prompt
+    must also forbid out-of-tool prose (the narration that wastes ~30% of output tokens)."""
+    props = list(VERDICT_SCHEMA["properties"])
+    assert props.index("reason") < props.index("winner"), "reason must come before winner"
+    assert VERDICT_SCHEMA["required"] == ["reason", "winner"]
+    prompt = build_pair_prompt(AXIS, "diffA", "diffB")
+    assert "NO analysis or prose" in prompt          # output-discipline directive present
+    assert "plus reason" not in prompt               # the old answer-first phrasing is gone
 
 
 def _subject_side(prompt: str) -> str:

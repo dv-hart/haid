@@ -181,6 +181,17 @@ def test_verify_prompt_defaults_to_refute():
     assert "refute" in p.lower() and "dead_code" in p
 
 
+def test_verify_schema_is_reasoning_first():
+    """`reason` before `verdict` so it conditions the verdict (not a post-hoc rationalization);
+    prompt forbids out-of-tool prose. See compare.VERDICT_SCHEMA for the why."""
+    props = list(defects.VERIFY_SCHEMA["properties"])
+    assert props.index("reason") < props.index("verdict")
+    assert defects.VERIFY_SCHEMA["required"] == ["reason", "verdict"]
+    p = defects.build_verify_prompt(
+        {"defect_class": "dead_code", "locator": "# old()", "note": "n"}, "--- diff ---")
+    assert "NO analysis or prose" in p and "plus reason" not in p
+
+
 # ----------------------------------------------------------------- achievement via defects
 def test_achievement_uses_execution_factor_for_defectresult():
     """A DefectResult flows through achievement() as the execution_factor penalty leg."""

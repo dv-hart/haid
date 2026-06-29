@@ -23,6 +23,9 @@ const model = input.model || 'haiku'
 
 log(`tagging ${jobs.length} branch(es), ${jobs.reduce((n, j) => n + j.n_targets, 0)} message(s)`)
 
+// agentType 'Explore' (not general-purpose): one-shot read-one-file task. Explore alone skips the
+// project CLAUDE.md + git status — leaner per-agent context and no project-rule bias on a labelling
+// task. Reads only its file, forces structured output, same labels. (Rationale in full: haid-judge.js.)
 const tagged = await parallel(jobs.map(j => () =>
   agent(
     `Read the file at ${j.path} using the Read tool, in full. Its entire contents are your ` +
@@ -30,7 +33,7 @@ const tagged = await parallel(jobs.map(j => () =>
     `Classify EVERY message marked '>>> CLASSIFY THIS MESSAGE — ref: … <<<' and no others, in ` +
     `order, copying each marker's short ref verbatim. Read ONLY this one file — do not open any ` +
     `other file, manifest, or the repository. Return structured output matching the required schema.`,
-    { label: `tag:${j.job_id}`, phase: 'Tag', schema, model, agentType: 'general-purpose' }
+    { label: `tag:${j.job_id}`, phase: 'Tag', schema, model, agentType: 'Explore' }
   ).then(r => ({ job_id: j.job_id, n_targets: j.n_targets, result: r }))
 ))
 

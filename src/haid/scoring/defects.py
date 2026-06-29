@@ -233,13 +233,18 @@ class DefectResult:
 # real points (sqrt model). So every SEVERE finding is independently re-checked by a skeptic
 # PROMPTED TO REFUTE, defaulting to refuted when not clearly demonstrable. Only survivors
 # count. Minors/others are never verified (they don't score).
+# `reason` is listed FIRST (before `verdict`) so it acts as a compact chain-of-thought that
+# conditions the verdict, instead of a post-hoc rationalization a decoder can't use (see the same
+# note on compare.VERDICT_SCHEMA). Names unchanged — apply_verify reads only `verdict`.
 VERIFY_SCHEMA = {
     "type": "object",
     "properties": {
+        "reason": {"type": "string",
+                   "description": "One or two terse sentences: does the diff clearly demonstrate "
+                                  "the defect, or not? Do NOT restate the diff."},
         "verdict": {"type": "string", "enum": ["confirmed", "refuted"]},
-        "reason": {"type": "string"},
     },
-    "required": ["verdict", "reason"],
+    "required": ["reason", "verdict"],
     "additionalProperties": False,
 }
 
@@ -263,7 +268,10 @@ def build_verify_prompt(finding: dict, diff: str) -> str:
             "Decide: is this REALLY an instance of that defect class in the added/changed code? "
             "Default to 'refuted' if it is not clearly demonstrable.\n\n"
             f"--- Diff ---\n{diff}\n\n"
-            "Respond ONLY via structured output: verdict = \"confirmed\" | \"refuted\", plus reason.")
+            "Respond ONLY via structured output: first `reason` — one or two terse sentences, "
+            "never restating the diff — then `verdict` = \"confirmed\" | \"refuted\". Write NO "
+            "analysis or prose in your message text; put all (terse) reasoning inside the `reason` "
+            "field and emit just the tool call.")
 
 
 def apply_verify(result: DefectResult, verdicts: list) -> DefectResult:

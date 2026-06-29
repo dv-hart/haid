@@ -56,14 +56,22 @@ _PREAMBLE = (
     "on ONE axis only. Identifiers may be anonymized (PROJECT/OWNER); diffs may be "
     "truncated to show code first.")
 
-# structured-output contract the host agent must satisfy per comparison
+# structured-output contract the host agent must satisfy per comparison.
+# `reason` is listed FIRST (before `winner`) on purpose: a decoder emits fields left-to-right, so
+# tokens after `winner` cannot influence it — an answer-first schema makes the justification
+# post-hoc and measurably degrades the judgment (forced JSON answer-first costs ~10-30% reasoning;
+# reasoning-first recovers it). Putting `reason` first turns it into a compact chain-of-thought that
+# conditions `winner`, so the separate free-text narration can be dropped (big output-token saving).
+# Field NAMES are unchanged — the workflow folds `winner` and the read-back ignores `reason`.
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
+        "reason": {"type": "string",
+                   "description": "One or two terse sentences naming the deciding factor; do NOT "
+                                  "restate the diff."},
         "winner": {"type": "string", "enum": ["A", "B", "tie"]},
-        "reason": {"type": "string"},
     },
-    "required": ["winner", "reason"],
+    "required": ["reason", "winner"],
     "additionalProperties": False,
 }
 
@@ -81,8 +89,11 @@ def build_pair_prompt(axis: str, diff_a: str, diff_b: str) -> str:
     q = AXIS_QUESTION[axis]
     return (f"{_PREAMBLE}\n\n{q}\n\nDecide which diff is MORE {axis} "
             f"({MORE_MEANS[axis]}).\n\n--- Diff A ---\n{diff_a}\n\n--- Diff B ---\n{diff_b}"
-            "\n\nRespond ONLY via structured output: "
-            'winner = "A" | "B" | "tie" (the diff that is MORE ' + axis + "), plus reason.")
+            "\n\nRespond ONLY via structured output: first `reason` — one or two terse sentences "
+            "naming the deciding factor, never restating the diff — then `winner` = \"A\" | \"B\" "
+            "| \"tie\" (the diff that is MORE " + axis + "). Write NO analysis or prose in your "
+            "message text; put all (terse) reasoning inside the `reason` field and emit just the "
+            "tool call.")
 
 
 class Backend(ABC):
