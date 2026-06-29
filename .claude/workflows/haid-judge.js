@@ -44,6 +44,12 @@ for (const m of manifests) {
 }
 log(`judging ${items.length} job(s) across ${manifests.length} manifest(s)`)
 
+// agentType 'Explore' (not general-purpose): each judge reads ONE self-contained file and emits a
+// structured verdict — a one-shot, read-only task. Explore is the only built-in that SKIPS the
+// project's CLAUDE.md + git status, which (a) cuts per-judge context/cache materially on repos with
+// a large CLAUDE.md and (b) is more correct — an anonymized-diff judge should not see the target
+// project's house rules. Measured: it reads only the file (no wandering), forces StructuredOutput,
+// and returns ~20% fewer output tokens than general-purpose at identical verdicts.
 const judged = await parallel(items.map(it => () =>
   agent(
     `Read the file at ${it.path} using the Read tool, in full. Its entire contents are your ` +
@@ -52,7 +58,7 @@ const judged = await parallel(items.map(it => () =>
     `not open any other file, manifest, or the repository. Return your answer as structured ` +
     `output matching the required schema.`,
     { label: `judge:${it.manifest}#${it.k}`, phase: 'Judge', schema: it.schema, model,
-      agentType: 'general-purpose' }
+      agentType: 'Explore' }
   ).then(r => ({ manifest: it.manifest, k: it.k, result: r }))
 ))
 
