@@ -66,11 +66,13 @@ own job file, so pairwise counterbalancing and per-finding verification isolatio
 board from Pages; otherwise the shipped snapshot. No account needed.
 
 `haid submit` is the only path that leaves the machine, and only when the user explicitly asks. It
-prints **exactly the row that becomes public + permanent**, then opens a validated GitHub PR
-(`git` + `gh`) adding `entries/<user>.json` to the separate **data-only** benchmark repo
-(`dv-hart/haid-benchmark`). Identity is the authenticated PR author (no local signature). It needs a
-local checkout of the benchmark repo (`--repo PATH`, or auto-detected via its `.haid-benchmark-repo`
-marker). Use `--dry-run` first to show the entry + the git/gh commands without pushing; pass `--yes`
-only when the user has confirmed. The repo-side workflows validate (hashes, leak guard, plausibility,
-author == username) and auto-merge. `haid benchmark` still emits the raw payload alone if that's all
-the user wants.
+prints **exactly the row that becomes public + permanent**, then opens a validated GitHub PR adding
+`entries/<user>.json` to the separate **data-only** benchmark repo (`dv-hart/haid-benchmark`).
+Identity is the authenticated PR author (no local signature). By default it is **clone-free** — it
+forks the repo as the user and writes the one file entirely over the GitHub API via `gh`, so it needs
+only `gh auth login`, no checkout (the repo owner pushes to the upstream directly since you can't fork
+your own repo). `--repo PATH` selects the legacy local-checkout flow (`git` + `gh`, marker
+`.haid-benchmark-repo`). Use `--dry-run` first to print exactly what would run without pushing; pass
+`--yes` only when the user has confirmed. The repo-side workflows validate (hashes, leak guard,
+plausibility, author == username) and auto-merge. `haid benchmark` still emits the raw payload alone
+if that's all the user wants.

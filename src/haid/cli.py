@@ -79,11 +79,13 @@
       The ADR-0005 v1 self-reported submission row: summary statistics ONLY (leak check
       refuses paths/titles/session ids), ladder + combiner-config hashes, content hash.
 
-  haid submit --scores S.json --github-user USER --project NAME [--repo PATH] [--dry-run] [--yes]
+  haid submit --scores S.json --github-user USER --project NAME [--dry-run] [--yes] [--repo PATH]
       Opt-in publish: build the row, show exactly what becomes PUBLIC + PERMANENT, then
-      open a validated PR (git + gh) adding entries/<user>.json to the data-only benchmark
-      repo. Identity = the GitHub PR author (no local signature, ADR-0005 v1). --dry-run
-      writes the entry and prints the commands without pushing.
+      open a validated PR adding entries/<user>.json to the data-only benchmark repo.
+      Clone-free by default — needs only `gh auth login` (forks the repo as you, no local
+      checkout). Identity = the GitHub PR author (no local signature, ADR-0005 v1).
+      --dry-run prints exactly what would run without pushing; --repo PATH uses the legacy
+      local-checkout flow.
 
   haid rank --scores S.json [--github-user USER] [--board FILE | --refresh]
       Read-only: where your row lands against the community distribution (same ladders +
@@ -539,15 +541,51 @@ def _build_payload(args, *, default_user: str) -> dict:
         generated_at=datetime.now().isoformat(timespec="seconds"))
 
 
+def _confirm_publish(args) -> int | None:
+    """This row is PUBLIC + PERMANENT — gate it on --yes or an interactive yes. Returns
+    None to proceed, or the exit code to return when the user hasn't consented."""
+    if args.yes:
+        return None
+    if not sys.stdin.isatty():
+        print("submit: refusing to publish non-interactively without --yes", file=sys.stderr)
+        return 2
+    if input("Publish this row to the PUBLIC community board? [y/N] ").strip().lower() \
+            not in ("y", "yes"):
+        print("aborted.")
+        return 1
+    return None
+
+
 def _cmd_submit(args) -> int:
     payload = _build_payload(args, default_user=args.github_user)
-    repo_root = Path(args.repo) if args.repo else report.submit.find_repo_root()
-    if repo_root is None:
-        print("submit: no benchmark-repo checkout found nearby; pass --repo PATH "
-              "(a local clone of the HAID repo)", file=sys.stderr)
-        return 2
     print(report.submit.render_public_preview(payload))
     print()
+    if args.repo:
+        return _submit_via_clone(args, payload)        # legacy: write into a local checkout
+    # default: clone-free, entirely over the GitHub API via `gh`
+    if args.dry_run:
+        print("[dry-run] would run (happy path; a re-submission adds an update step):")
+        for cmd in report.submit.api_plan(payload, args.project):
+            print("    " + " ".join(shlex.quote(c) for c in cmd))
+        return 0
+    blocked = _confirm_publish(args)
+    if blocked is not None:
+        return blocked
+    try:
+        url = report.submit.submit_via_api(payload, args.project)
+    except (RuntimeError, ValueError) as e:
+        print(f"submit: {e}", file=sys.stderr)
+        return 1
+    print(f"submitted — PR opened: {url}")
+    return 0
+
+
+def _submit_via_clone(args, payload) -> int:
+    repo_root = Path(args.repo)
+    if not report.submit.find_repo_root(repo_root):
+        print(f"submit: {repo_root} is not a benchmark-repo checkout "
+              f"(missing {report.submit.REPO_MARKER})", file=sys.stderr)
+        return 2
     cmds = report.submit.pr_commands(args.github_user, args.project)
     if args.dry_run:
         dest = report.submit.write_entry(payload, repo_root)
@@ -556,15 +594,9 @@ def _cmd_submit(args) -> int:
         for cmd in cmds:
             print("    " + " ".join(shlex.quote(c) for c in cmd))
         return 0
-    if not args.yes:                      # this is PUBLIC + PERMANENT — require consent
-        if not sys.stdin.isatty():
-            print("submit: refusing to publish non-interactively without --yes",
-                  file=sys.stderr)
-            return 2
-        if input("Publish this row to the PUBLIC community board? [y/N] ").strip().lower() \
-                not in ("y", "yes"):
-            print("aborted.")
-            return 1
+    blocked = _confirm_publish(args)
+    if blocked is not None:
+        return blocked
     report.submit.write_entry(payload, repo_root)
     try:
         url = report.submit.run_pr(repo_root, cmds)
@@ -804,9 +836,10 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--github-user", required=True,
                     help="your GitHub username (entry identity == PR author)")
     sb.add_argument("--project", required=True, help="project display name")
-    sb.add_argument("--repo", help="local checkout of the benchmark repo (default: auto-detect)")
+    sb.add_argument("--repo", help="legacy: open the PR from this local benchmark-repo "
+                                   "checkout instead of the default clone-free API path")
     sb.add_argument("--dry-run", action="store_true",
-                    help="write the entry + print the git/gh commands; push nothing")
+                    help="print exactly what would run; push nothing")
     sb.add_argument("--yes", action="store_true",
                     help="skip the interactive confirmation (publishes immediately)")
     sb.set_defaults(func=_cmd_submit)
