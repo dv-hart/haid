@@ -142,6 +142,8 @@ class WindowDistribution:
                 "volume_term": round(a.volume_term, 4),
                 "difficulty_D": round(a.difficulty_D, 4),
                 "cleanliness_C": round(a.cleanliness_C, 4),
+                "bugfix_term": round(a.bugfix_term, 4),
+                "n_cured_bugs": a.n_cured_bugs,
             }
         if s.value:
             out["value"] = (None if s.value.value != s.value.value      # nan → null
@@ -183,14 +185,22 @@ def score_episodes(view, sessions, episodes, backend_for: BackendFor, *, samples
                    k_defect: float = _value.DEFAULT_K_DEFECT,
                    loc_floor: int = _value.DEFAULT_LOC_FLOOR,
                    exec_floor: float = _value.DEFAULT_EXEC_FLOOR,
+                   tagged=None, cured_eligible=None,
                    label: str = "") -> WindowDistribution:
     """Score every episode → a WindowDistribution.
 
     `backend_for("difficulty", id)` supplies a compare.Backend (pairwise placement);
     `backend_for("cleanliness", id)` a detect.DetectBackend (detect → verify). A leg that
     defers under the live file-handoff path raises `PendingComparisons` / `PendingDetection`;
-    each is caught and its manifest recorded so all episodes' manifests surface together."""
+    each is caught and its manifest recorded so all episodes' manifests surface together.
+
+    `tagged` (the haid-tag output) turns on the bug-fix reward: each episode's fix spans are
+    placed on the difficulty ladder and folded into achievement as cured inherited bugs
+    (scoring/bugfix.py; docs/plans/bugfix-reward.md). `cured_eligible(bug_id)->bool` applies the
+    attribution gate (the caller wires it from bug notes); omitted ⇒ all cures count (the gate is
+    off). Cure placements defer like the other legs and land in the same pending list."""
     from ..bridge import episode_inputs
+    from ..scoring import bugfix as _bugfix
 
     emetrics = run_episodes(view, episodes)
     by_id = {_stem(s.path): s for s in sessions}
@@ -222,13 +232,24 @@ def score_episodes(view, sessions, episodes, backend_for: BackendFor, *, samples
         except PendingDetection as p:
             pending.append(p.manifest_path)
 
+        # bug-fix reward: place this episode's eligible fix spans (cured inherited bugs).
+        cured = []
+        if tagged is not None:
+            ep_sids = set(ep.session_ids)
+            ep_tags = [t for t in tagged if t.session_id in ep_sids]
+            cands = _bugfix.collect_candidates(members, ep_tags)
+            cured, cpending = _bugfix.resolve_cured(cands, backend_for,
+                                                    eligible=cured_eligible, samples=samples)
+            pending += cpending
+
         if pending or dpl is None or defects is None:
             scores.append(EpisodeScore(ep, has_artifact=True, bridge=br, metrics=mets,
                                        difficulty=dpl, cleanliness=defects, pending=pending))
             continue
 
         ach = _value.achievement(vol, dpl, defects, alpha=alpha, top_ratio=top_ratio,
-                                 k_defect=k_defect, loc_floor=loc_floor, exec_floor=exec_floor)
+                                 k_defect=k_defect, loc_floor=loc_floor, exec_floor=exec_floor,
+                                 cured_bugs=cured)
         val = _value.value(ach, br.cost)
         scores.append(EpisodeScore(ep, has_artifact=True, bridge=br, metrics=mets,
                                    difficulty=dpl, cleanliness=defects, achievement=ach, value=val))

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import textwrap
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable
@@ -42,6 +43,20 @@ MIN_RE_PROMPTS = 2
 DRIFT_DIRECTIVES_PER_SESSION = 3   # new_directives in ONE session -> drift.multi_topic
 LOW_DIFFICULTY_RUNG = 2.0    # rung <= this AND above-median spend -> cost.model_overkill
 MIN_SEVERE_DEFECTS = 1       # severe defects in an episode >= this -> cleanliness.low
+
+WRAP_WIDTH = 100             # digest free-text wraps here; we never cut a word mid-render
+
+
+def _clean(text: str) -> str:
+    """Collapse internal whitespace so wrapped output has no stray newlines/tabs."""
+    return " ".join((text or "").split())
+
+
+def _wrap(text: str, initial: int = 6, subsequent: int = 6) -> str:
+    """Word-wrap free text to a hanging-indented block. Never truncates — a human reads
+    this file, so the whole sentence is shown, just wrapped at a word boundary."""
+    return textwrap.fill(_clean(text), width=WRAP_WIDTH,
+                         initial_indent=" " * initial, subsequent_indent=" " * subsequent)
 
 
 @dataclass
@@ -121,7 +136,7 @@ def _bug_finding(n: dict, catalog: Catalog, counter) -> Finding:
     return Finding(
         id=counter(), source="bug_note", symptoms=symptoms,
         summary=f"[bug] CAUSE: {str(n.get('cause_class')).upper()}{mk} — "
-                f"{n.get('detail', '')[:90]}",
+                f"{_clean(n.get('detail', ''))}",
         evidence=(n.get("note", "") + (" | audit: " + n["anchor_audit"]
                                        if n.get("anchor_audit") else "")),
         treatments=[{"id": t.id, "title": t.title} for t in treats],
@@ -142,7 +157,7 @@ def _note_findings(why_doc: dict, catalog: Catalog, counter) -> list[Finding]:
         treats = catalog.match(symptoms) if symptoms else []
         out.append(Finding(
             id=counter(), source="why_note", symptoms=symptoms,
-            summary=f"[{n.get('metric')}] {n.get('detail', '')[:120]}",
+            summary=f"[{n.get('metric')}] {_clean(n.get('detail', ''))}",
             evidence=(n.get("note", "") + (" | audit: " + n["anchor_audit"]
                                            if n.get("anchor_audit") else "")),
             treatments=[{"id": t.id, "title": t.title} for t in treats],
@@ -162,8 +177,8 @@ def _window_findings(tags_doc: dict | None, scores_doc: dict | None,
         n_corr = sum(1 for m in msgs if m.get("move") == "correction")
         n_rep = sum(1 for m in msgs if m.get("move") == "re_prompt")
         if n_corr >= MIN_CORRECTIONS:
-            quotes = "; ".join(m.get("purpose", "")[:80] for m in msgs
-                               if m.get("move") == "correction")[:300]
+            quotes = "; ".join(_clean(m.get("purpose", "")) for m in msgs
+                               if m.get("move") == "correction")
             out.append(Finding(
                 id=counter(), source="window_rule",
                 symptoms=["alignment.corrections"],
@@ -279,12 +294,12 @@ def _render_bug_card(f: dict) -> str:
     head = (f"  {f['id']} {cause}{mk}  "
             f"(origin={b.get('origin')} · scope={b.get('scope')} · fix {b.get('holding')}"
             + (f" · conf {f['confidence']}" if f.get("confidence") else "") + ")")
-    lines = [head, f"      {f['summary']}"]
+    lines = [head, _wrap(f['summary'])]
     ref = b.get("origin_ref")
     if ref:
-        lines.append(f"      origin: {ref.get('session', '?')} @ {ref.get('ts', '?')} — "
-                     f"{ref.get('what', '')[:140]}")
-    lines.append(f"      evidence: {f['evidence'][:240]}")
+        lines.append(_wrap(f"origin: {ref.get('session', '?')} @ {ref.get('ts', '?')} — "
+                           f"{ref.get('what', '')}"))
+    lines.append(_wrap(f"evidence: {f['evidence']}"))
     if f.get("avoidable_tokens"):
         lines.append(f"      rework: ~{f['avoidable_tokens']} tok")
     if not f["symptoms"]:
@@ -325,8 +340,9 @@ def render_digest(d: dict) -> str:
     if active:
         L.append("## The why — findings with matched treatments")
         for f in active:
-            L.append(f"  {f['id']} [{'/'.join(f['symptoms'])}] {f['summary']}")
-            L.append(f"      evidence: {f['evidence'][:240]}")
+            L.append(_wrap(f"{f['id']} [{'/'.join(f['symptoms'])}] {f['summary']}",
+                           initial=2))
+            L.append(_wrap(f"evidence: {f['evidence']}"))
             if f.get("avoidable_tokens"):
                 L.append(f"      avoidable: ~{f['avoidable_tokens']} tok")
             for t in f["treatments"][:3]:

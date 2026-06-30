@@ -362,7 +362,9 @@ def _cmd_score(args) -> int:
     dist = episode_score.score_episodes(
         view_, sessions, eps, backend_for, samples=args.samples,
         alpha=args.alpha, top_ratio=args.top_ratio, k_defect=args.k_defect,
-        loc_floor=args.loc_floor, exec_floor=args.exec_floor, label=label)
+        loc_floor=args.loc_floor, exec_floor=args.exec_floor,
+        tagged=tagged, label=label)        # bug-fix reward (cures placed per episode); gate off
+                                           # until bug-attribution is wired (docs/plans/bugfix-reward.md)
 
     if args.json:
         print(json.dumps(dist.to_json(), indent=2))
