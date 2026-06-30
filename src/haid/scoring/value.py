@@ -75,6 +75,20 @@ DEFAULT_ALPHA = 0.5         # volume exponent: diminishing returns (sqrt)
 DEFAULT_TOP_RATIO = 10.0    # difficulty: hardest-end worth vs median ("10x engineer")
 DEFAULT_COST_UNIT = 1e9     # value denominator unit: achievement per BILLION nTok (GnTok)
 
+# --- bug-fix reward knobs (the cured-inherited-bug term; see docs/plans/bugfix-reward.md) ---
+# achievement gets an ADDITIVE term for curing inherited bugs, so remediation episodes stop
+# scoring as low-value cleanup. Per eligible cured bug:
+#     worth = D(fix_difficulty) * (earned_find_cost / find_unit)^gamma
+#     bugfix_term = gain * (Σ worth)^beta
+# The find-cost is in BOTH the value denominator (real cost) AND here (numerator): on
+# achievement_total a hard-to-find bug is worth more (elusiveness rewarded), while in the value
+# ratio it partially cancels, so value reads as remediation EFFICIENCY rather than hunt length.
+# ALL FOUR START UNTUNED — placeholders to calibrate after the join lands (build order Phase 3).
+DEFAULT_BUGFIX_GAIN = 1.0   # overall term scale
+DEFAULT_FIND_UNIT = 1e6     # nTok per "elusiveness unit" (earned find-cost scale)
+DEFAULT_FIND_GAMMA = 1.0    # find-cost exponent: 1=value-neutral, >1 net-rewards elusiveness
+DEFAULT_BUGFIX_BETA = 0.5   # concavity over cured-bug COUNT (mirrors alpha; caps mass-fix farming)
+
 # --- cleanliness-as-defect-density knobs (the ladder replacement; see scoring/defects.py)
 # execution_factor = max(EXEC_FLOOR, 1 - K_DEFECT * severe_count / sqrt(max(changed_lines, LOC_FLOOR)))
 # The denominator is sqrt(LOC), NOT LOC: severe-defect COUNT scales sub-linearly with size (a
@@ -90,15 +104,23 @@ DEFAULT_EXEC_FLOOR = 0.6    # worst-case execution discount (bounded so cleanlin
 def combiner_config(*, alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
                     k_defect: float = DEFAULT_K_DEFECT, loc_floor: int = DEFAULT_LOC_FLOOR,
                     exec_floor: float = DEFAULT_EXEC_FLOOR,
-                    cost_unit: float = DEFAULT_COST_UNIT) -> dict:
+                    cost_unit: float = DEFAULT_COST_UNIT,
+                    bugfix_gain: float = DEFAULT_BUGFIX_GAIN,
+                    find_unit: float = DEFAULT_FIND_UNIT,
+                    find_gamma: float = DEFAULT_FIND_GAMMA,
+                    bugfix_beta: float = DEFAULT_BUGFIX_BETA) -> dict:
     """The combiner knobs that fold the axes into `value`. Single source of truth for the
     combiner-config hash: two users on the same ladders but different knobs (or a different
     `cost_unit`, which rescales the value magnitude everyone is ranked on) are NOT
     comparable, so the benchmark payload pins these (ADR-0005). The cleanliness knobs are the
     defect-density ones (k_defect/loc_floor/exec_floor) — gamma/floor of the retired pairwise
-    ladder no longer affect the score."""
+    ladder no longer affect the score. The bug-fix knobs (bugfix_gain/find_unit/find_gamma/
+    bugfix_beta) pin the cured-inherited-bug term; adding them re-buckets the benchmark, which
+    is correct (a different achievement definition is not comparable to the old one)."""
     return {"alpha": alpha, "top_ratio": top_ratio, "k_defect": k_defect,
-            "loc_floor": loc_floor, "exec_floor": exec_floor, "cost_unit": cost_unit}
+            "loc_floor": loc_floor, "exec_floor": exec_floor, "cost_unit": cost_unit,
+            "bugfix_gain": bugfix_gain, "find_unit": find_unit,
+            "find_gamma": find_gamma, "bugfix_beta": bugfix_beta}
 
 
 @dataclass(frozen=True)
@@ -112,8 +134,32 @@ class DifficultyWorth:
 
 
 @dataclass(frozen=True)
+class CuredBug:
+    """One eligible cured-inherited-bug feeding the additive bug-fix achievement term.
+
+    `fix_difficulty` is the fix-span diff's placement on the difficulty ladder (reused, not a
+    new ladder); `earned_find_cost` is the waste-discounted nTok attributable to LOCATING the
+    bug (the eligibility gate + waste discount are applied upstream — this struct is already
+    eligible). See docs/plans/bugfix-reward.md."""
+    fix_difficulty: PlacementResult
+    earned_find_cost: float
+    bug_id: str = ""                      # the fix-span anchor id (provenance)
+
+
+@dataclass(frozen=True)
+class BugfixResult:
+    """The additive bug-fix term and its decomposition (every cured bug's worth kept)."""
+    term: float
+    raw_sum: float                        # Σ worth, pre-gain, pre-beta
+    n_bugs: int
+    per_bug: tuple = ()                   # ((bug_id, D, elusiveness, worth), ...)
+    gain: float = DEFAULT_BUGFIX_GAIN
+    beta: float = DEFAULT_BUGFIX_BETA
+
+
+@dataclass(frozen=True)
 class AchievementResult:
-    """achievement = volume_term * difficulty_D * cleanliness_C, components preserved."""
+    """achievement = volume_term * difficulty_D * cleanliness_C + bugfix_term, components kept."""
     achievement: float
     # volume leg
     volume_loc: float
@@ -130,16 +176,21 @@ class AchievementResult:
     cleanliness_mode: str = "defects"
     severe_count: int = 0
     changed_lines: int = 0
+    # bug-fix leg (cured inherited bugs; ADDITIVE, not a multiplier; see bugfix-reward.md)
+    bugfix_term: float = 0.0
+    n_cured_bugs: int = 0
 
     def summary(self) -> str:
         clean = (f"  cleanliness: {self.severe_count} severe / {self.changed_lines} chg LOC "
                  f"-> C={self.cleanliness_C:.3g} (defect-density, floor={self.floor:g})")
+        bug = (f"\n  bugfix:      {self.n_cured_bugs} cured -> +{self.bugfix_term:.3g}"
+               if self.bugfix_term else "")
         return (f"achievement={self.achievement:.3g}\n"
                 f"  volume:      LOC={self.volume_loc:.1f} ^{self.alpha:g} "
                 f"-> {self.volume_term:.3g}\n"
                 f"  difficulty:  latent={self.difficulty_latent:+.2f} "
                 f"-> D={self.difficulty_D:.3g} (top/median={self.top_ratio:g}x)\n"
-                + clean)
+                + clean + bug)
 
 
 @dataclass(frozen=True)
@@ -245,18 +296,54 @@ def execution_factor(severe_count: int, changed_lines: int, *,
     return max(floor, 1.0 - k * density)
 
 
+# --- bug-fix reward: an ADDITIVE term for curing inherited bugs (the achievement gap) -----
+def bugfix_term(cured, *, gain: float = DEFAULT_BUGFIX_GAIN, find_unit: float = DEFAULT_FIND_UNIT,
+                gamma: float = DEFAULT_FIND_GAMMA, beta: float = DEFAULT_BUGFIX_BETA,
+                top_ratio: float = DEFAULT_TOP_RATIO,
+                difficulty_ladder: Ladder | None = None) -> BugfixResult:
+    """The additive bug-fix achievement term over a list of (already-eligible) CuredBugs.
+
+        worth(bug)  = D(fix_difficulty) * (max(earned_find_cost, 0) / find_unit)^gamma
+        term        = gain * (Σ worth)^beta
+
+    `D` reuses difficulty_worth() over the fix-span placement (NO new ladder). The find-cost
+    enters here AND the value denominator on purpose: it lifts achievement for elusive bugs
+    while partially cancelling in the value ratio, so value reads as remediation efficiency,
+    not hunt length (docs/plans/bugfix-reward.md). `beta < 1` makes the COUNT concave so an
+    'oops-all-bugs' cleanup can't farm linearly. Eligibility + waste-discount are upstream;
+    an empty list yields a zero term (and leaves achievement untouched)."""
+    per = []
+    raw = 0.0
+    for b in cured:
+        D = difficulty_worth(b.fix_difficulty, difficulty_ladder, top_ratio=top_ratio).D
+        if D != D:                                  # nan placement (no comparisons) -> skip
+            continue
+        elusiveness = (max(float(b.earned_find_cost), 0.0) / find_unit) ** gamma
+        w = D * elusiveness
+        raw += w
+        per.append((b.bug_id, D, elusiveness, w))
+    term = gain * (raw ** beta) if raw > 0 else 0.0
+    return BugfixResult(term=term, raw_sum=raw, n_bugs=len(per), per_bug=tuple(per),
+                        gain=gain, beta=beta)
+
+
 # --- the fold ---------------------------------------------------------------------------
 def achievement(volume, difficulty_pl: PlacementResult, cleanliness: DefectResult, *,
                 alpha: float = DEFAULT_ALPHA, top_ratio: float = DEFAULT_TOP_RATIO,
                 difficulty_ladder: Ladder | None = None,
                 k_defect: float = DEFAULT_K_DEFECT, loc_floor: int = DEFAULT_LOC_FLOOR,
-                exec_floor: float = DEFAULT_EXEC_FLOOR) -> AchievementResult:
-    """achievement = weighted_loc**alpha * D(difficulty) * C(cleanliness).
+                exec_floor: float = DEFAULT_EXEC_FLOOR,
+                cured_bugs=None, bugfix_gain: float = DEFAULT_BUGFIX_GAIN,
+                find_unit: float = DEFAULT_FIND_UNIT, find_gamma: float = DEFAULT_FIND_GAMMA,
+                bugfix_beta: float = DEFAULT_BUGFIX_BETA) -> AchievementResult:
+    """achievement = weighted_loc**alpha * D(difficulty) * C(cleanliness) + bugfix_term.
 
     `volume` is a volume.VolumeResult (uses .weighted_loc) or a bare float LOC.
     `cleanliness` is a defects.DefectResult; C = execution_factor over its severe-defect
     density (the counted-defect model that replaced the pairwise cleanliness ladder).
-    Difficulty is still a pairwise placement.
+    Difficulty is still a pairwise placement. `cured_bugs` is an optional list of CuredBug
+    (already eligibility-gated upstream); it adds the ADDITIVE bug-fix term and defaults to
+    none, so existing callers are unchanged.
     """
     loc = getattr(volume, "weighted_loc", volume)
     loc = max(float(loc), 0.0)
@@ -264,7 +351,10 @@ def achievement(volume, difficulty_pl: PlacementResult, cleanliness: DefectResul
     vol_term = loc ** alpha
     C = execution_factor(cleanliness.severe_count, cleanliness.changed_lines,
                          k=k_defect, loc_floor=loc_floor, floor=exec_floor)
-    ach = vol_term * dw.D * C
+    bug = bugfix_term(cured_bugs or [], gain=bugfix_gain, find_unit=find_unit,
+                      gamma=find_gamma, beta=bugfix_beta, top_ratio=top_ratio,
+                      difficulty_ladder=difficulty_ladder)
+    ach = vol_term * dw.D * C + bug.term
     return AchievementResult(
         achievement=ach,
         volume_loc=loc, alpha=alpha, volume_term=vol_term,
@@ -272,6 +362,7 @@ def achievement(volume, difficulty_pl: PlacementResult, cleanliness: DefectResul
         cleanliness_C=C, floor=exec_floor,
         cleanliness_mode="defects", severe_count=cleanliness.severe_count,
         changed_lines=cleanliness.changed_lines,
+        bugfix_term=bug.term, n_cured_bugs=bug.n_bugs,
     )
 
 

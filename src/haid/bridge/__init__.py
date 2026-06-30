@@ -25,8 +25,8 @@ from dataclasses import dataclass, field
 from .reconstruct import FileRecon, ReconResult, reconstruct
 from .usage import extract_cost
 
-__all__ = ["BridgeResult", "window_inputs", "episode_inputs", "reconstruct", "extract_cost",
-           "FileRecon", "ReconResult"]
+__all__ = ["BridgeResult", "window_inputs", "episode_inputs", "span_inputs", "reconstruct",
+           "extract_cost", "FileRecon", "ReconResult"]
 
 _ABS = re.compile(r"^(?:/|[A-Za-z]:[\\/]|\\\\)")   # posix root, drive letter, or UNC
 
@@ -110,6 +110,59 @@ def episode_inputs(episode_sessions) -> BridgeResult:
     from ..window import build_view
     sub_view = build_view(episode_sessions)
     return window_inputs(sub_view, episode_sessions)
+
+
+def _write_tuple(tc, tur_by_id: dict) -> tuple:
+    """A ToolCall → the (file_id, tool, tur, write_op, write_content, derived) tuple reconstruct
+    consumes. Mirrors the per-write shape window_inputs builds from the active stream."""
+    return (tc.target_file_id, tc.tool, tur_by_id.get(tc.id, {}),
+            tc.write_op, tc.write_content, tc.derived_write)
+
+
+def _branch_writes(view, branch: str) -> list:
+    """The branch's content-modifying writes (repo-relative; externals dropped), chronological."""
+    from ..graph.model import is_write
+    out = []
+    for label, tcs in view.timelines:
+        if label != branch:
+            continue
+        out.extend(tc for tc in tcs
+                   if is_write(tc) and tc.target_file_id and not _is_external(tc.target_file_id))
+    return sorted(out, key=lambda tc: tc.ts or "")
+
+
+def span_inputs(view, sessions, *, branch: str, start_ts: str,
+                end_ts: str | None = None) -> ReconResult:
+    """Reconstruct ONE fix-span's net diff: the delta produced by writes in [start_ts, end_ts) on
+    a single `branch` (the "sid:timeline" label from build_view). `end_ts=None` runs to the
+    branch's end.
+
+    Baseline = each touched file's state as it ENTERED the span, computed by replaying that
+    branch's PRE-span writes — so the diff is the span's OWN delta (the bug present at span entry,
+    gone at span exit), correct even for a large file whose in-span edit never captured an
+    `originalFile` (where window-entry baselines would otherwise leak pre-span changes in).
+
+    This is the scored substrate for the bug-fix reward (docs/plans/bugfix-reward.md): the fix
+    span's diff is what gets placed on the difficulty ladder. **Grain note:** this slices BELOW a
+    session, which is sound for a DIFF (replay is line-exact) but NOT for cost — token cost stays
+    session-atomic (see `episode_inputs`), so find-cost is attributed separately, never here.
+    """
+    tur_by_id = _tur_index(sessions)
+    win_baselines = _baselines(sessions)
+
+    writes = _branch_writes(view, branch)
+    pre = [tc for tc in writes if tc.ts and start_ts and tc.ts < start_ts]
+    inspan = [tc for tc in writes
+              if tc.ts and start_ts and tc.ts >= start_ts and (end_ts is None or tc.ts < end_ts)]
+
+    # Replay pre-span writes to learn each touched file's state at span entry; only buffer-mode
+    # reconstructions carry a trustworthy `final` (hunks mode has no full content), so seed the
+    # span baseline from those and fall back to window-entry for the rest.
+    pre_recon = reconstruct([_write_tuple(tc, tur_by_id) for tc in pre], baselines=win_baselines)
+    span_baselines = {fr.file_id: fr.final for fr in pre_recon.files if fr.mode == "buffer"}
+
+    return reconstruct([_write_tuple(tc, tur_by_id) for tc in inspan],
+                       baselines={**win_baselines, **span_baselines})
 
 
 def _tur_index(sessions) -> dict:

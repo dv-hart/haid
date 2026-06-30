@@ -114,6 +114,77 @@ def test_difficulty_dominates_volume_at_the_top():
     assert elite_small.achievement > trivial_big.achievement
 
 
+# ---------------------------------------------------------------- bug-fix reward term
+def _cured(beats: int, find_cost: float, bug_id: str = "b") -> value.CuredBug:
+    """An eligible cured bug: fix-span placed at `beats` on the difficulty ladder, with a
+    waste-discounted find cost (eligibility is assumed applied upstream)."""
+    return value.CuredBug(fix_difficulty=_diff_placement(beats, ties_top=True),
+                          earned_find_cost=find_cost, bug_id=bug_id)
+
+
+def test_no_cured_bugs_leaves_achievement_untouched():
+    """Backward compat: the default (no cured bugs) is exactly the old volume*D*C."""
+    base = value.achievement(50.0, _mid_difficulty(), _clean_defects())
+    assert base.bugfix_term == 0.0
+    assert base.n_cured_bugs == 0
+    assert abs(base.achievement - base.volume_term * base.difficulty_D * base.cleanliness_C) < 1e-9
+
+
+def test_curing_an_inherited_bug_increases_achievement():
+    """An eligible cured bug adds a strictly positive additive term."""
+    base = value.achievement(50.0, _mid_difficulty(), _clean_defects())
+    withbug = value.achievement(50.0, _mid_difficulty(), _clean_defects(),
+                                cured_bugs=[_cured(beats=4, find_cost=2e6)])
+    assert withbug.n_cured_bugs == 1
+    assert withbug.bugfix_term > 0.0
+    assert withbug.achievement > base.achievement
+    assert abs(withbug.achievement - (base.achievement + withbug.bugfix_term)) < 1e-9
+
+
+def test_harder_to_find_bug_is_worth_more():
+    """Elusiveness pays: same fix difficulty, more earned find-cost -> bigger term (gamma>0)."""
+    easy = value.bugfix_term([_cured(beats=4, find_cost=1e6)])
+    hard = value.bugfix_term([_cured(beats=4, find_cost=9e6)])
+    assert hard.term > easy.term
+
+
+def test_harder_to_fix_bug_is_worth_more():
+    """Same find-cost, higher fix-difficulty placement -> bigger term (D leg)."""
+    trivial = value.bugfix_term([_cured(beats=1, find_cost=3e6)])
+    expert = value.bugfix_term([_cured(beats=8, find_cost=3e6)])
+    assert expert.term > trivial.term
+
+
+def test_bugfix_count_is_concave_anti_farm():
+    """beta<1: two cured bugs are worth LESS than twice one (no linear mass-fix farming)."""
+    one = value.bugfix_term([_cured(beats=4, find_cost=3e6, bug_id="a")])
+    two = value.bugfix_term([_cured(beats=4, find_cost=3e6, bug_id="a"),
+                             _cured(beats=4, find_cost=3e6, bug_id="b")])
+    assert two.term > one.term                       # more is still more
+    assert two.term < 2.0 * one.term                 # but sub-linear (concave)
+
+
+def test_bugfix_zero_find_cost_contributes_nothing():
+    """A bug with no attributable (earned) find-cost adds nothing — elusiveness is the driver."""
+    r = value.bugfix_term([_cured(beats=4, find_cost=0.0)])
+    assert r.term == 0.0
+
+
+def test_bugfix_skips_nan_placement():
+    """A fix-span with no usable comparisons (nan latent -> nan D) is skipped, not crashed."""
+    empty_pl = PlacementResult(axis="difficulty", rung=0.0, seen=0, n_rungs=9, samples=1,
+                               per_anchor=[])
+    r = value.bugfix_term([value.CuredBug(fix_difficulty=empty_pl, earned_find_cost=5e6)])
+    assert r.n_bugs == 0
+    assert r.term == 0.0
+
+
+def test_bugfix_knobs_pinned_in_combiner_config():
+    cfg = value.combiner_config()
+    for k in ("bugfix_gain", "find_unit", "find_gamma", "bugfix_beta"):
+        assert k in cfg
+
+
 # ---------------------------------------------------------------- value = achievement / cost
 def test_value_divides_by_normalized_tokens_in_gntok_units():
     """value = achievement per cost_unit nTok (default 1e9), NOT per single nTok — otherwise
