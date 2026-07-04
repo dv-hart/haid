@@ -2,19 +2,62 @@
 
 *Score, visualize, and coach your Claude Code sessions — from the transcripts already on your machine.*
 
-HAID turns your own Claude Code session transcripts into **one number you can track and
-rank**, a **visualization** of where the work and the tokens actually went, and a
-**coaching report** on what to do differently next time. It runs locally, against the
-`~/.claude/projects/` transcripts you already have — no instrumentation, no account, nothing
-leaves your machine unless you explicitly opt in.
+[![PyPI](https://img.shields.io/pypi/v/haid)](https://pypi.org/project/haid/)
+[![Python ≥3.10](https://img.shields.io/pypi/pyversions/haid)](https://pypi.org/project/haid/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+You already have the data. Every Claude Code session you've ever run is sitting in
+`~/.claude/projects/` as a transcript — what you asked for, what the agent did, every file it
+read and wrote, every token it spent. HAID turns that pile into three things:
+
+- **One number you can track and rank** — how much you *achieved* per token spent, placed
+  against a calibrated reference ladder of real code changes.
+- **A visualization** of where the work and the tokens actually went — a time-layered bus
+  diagram you can read like a subway map of your session.
+- **A coaching report** that tells you what to do differently next time, with cited evidence
+  from your own transcripts — never a confident guess.
+
+Everything runs **locally**, against transcripts you already have. No instrumentation, no
+account, nothing leaves your machine unless you explicitly opt in.
+
+## Quickstart
+
+Two pieces: the `haid` CLI (the engine — stdlib-only, zero dependencies) and the Claude Code
+plugin (the driver — a skill that runs the pipeline for you).
 
 ```bash
 pip install haid
 ```
 
-Then, inside Claude Code, just ask: **"how am I doing?"**
+Then, inside Claude Code:
 
----
+```
+/plugin marketplace add dv-hart/haid
+/plugin install haid@haid
+```
+
+Start a new session and just ask: **"how am I doing?"** (or invoke `/haid-report`). Claude
+runs the full pipeline — metrics → tag → episodes → score → why → report — and presents your
+coaching report. That's it.
+
+Want a taste before involving a model at all? This is free, instant, and fully deterministic:
+
+```bash
+haid metrics --project ~/path/to/some/project --days 30
+```
+
+## What it costs
+
+HAID is free and local. The `haid` CLI **never calls a model itself** — the model-judgment
+steps (scoring, tagging, investigation) run *inside your own Claude Code session* as
+subagents, so they draw on the plan you already pay for, and the transcripts never leave the
+room.
+
+- A full coaching report on a **big project** (a 30-day window, dozens of sessions) uses
+  roughly **20% of a 5-hour usage window on a Claude Max (5×) plan** — that's the recommended
+  tier. Smaller projects cost proportionally less.
+- The **zero-cost paths** — `haid metrics` and the `--digest-only` report — are fully
+  deterministic and never touch a model. Start there if you're budget-shy.
 
 ## 🏆 The leaderboard
 
@@ -38,7 +81,8 @@ and it's what the **opt-in community leaderboard** ranks. The board is:
   GitHub Pages → [the public board](https://dv-hart.github.io/haid-benchmark/).
 
 It's deliberately **trust-but-verify, low-stakes** — a self-reported board, labeled as such,
-with a plausibility check as the only gate. See [ADR-0005](docs/decisions/0005-community-benchmark.md).
+with a plausibility check as the only gate. The board is young: submit a score and you're
+among the first on it. See [ADR-0005](docs/decisions/0005-community-benchmark.md).
 
 ## The big idea: an achievement ladder, not a token counter
 
@@ -81,8 +125,9 @@ per-episode achievement badges from the same scoring run. Opens in any browser, 
 haid viz --project ~/path/to/project --days 30 --scores out/report/scores.json
 ```
 
-Same substrate, two views: *where the work went* and *where the tokens went*. Design in
-[visualization.md](docs/visualization.md).
+Same substrate, two views: *where the work went* and *where the tokens went*. Fat buses,
+re-touch clusters, and retry loops jump out visually before you read a single number. Design
+in [visualization.md](docs/visualization.md).
 
 ## The coaching report
 
@@ -101,16 +146,13 @@ so the bar is cite-or-say-unknown ([trust-discipline.md](docs/trust-discipline.m
 passes are complementary — one finds where the agent did the *wrong thing*, the other where
 it did the *right thing wastefully* ([architecture.md](docs/architecture.md)).
 
-## Install
+## Install notes
 
 HAID is on PyPI — **stdlib-only, no dependencies, Python ≥ 3.10**:
 
 ```bash
 pip install haid
 haid --help
-
-# the quickest, fully-deterministic smoke test (no model calls):
-haid metrics --project ~/path/to/some/project --days 30
 ```
 
 On Ubuntu/WSL without a venv, a user install works fine (ensure `~/.local/bin` is on `PATH`):
@@ -125,30 +167,16 @@ Windows-side install can still reach WSL transcripts via UNC `--session` paths l
 `//wsl.localhost/Ubuntu/home/<user>/.claude/projects/<slug>/*.jsonl`, but `--project`
 discovery won't cross the boundary.)
 
-## Activating in Claude Code
+**Plugin details:** the plugin ships the [`haid-report` skill](.claude/skills/haid-report/SKILL.md)
+plus a `SessionStart` hook that checks the `haid` CLI is on the PATH and prints an install
+hint if it's missing. If you'd rather not install a plugin, you can copy the skill by hand:
 
-The `haid` CLI **never calls a model itself.** The full pipeline
-(`metrics → tag → episodes → score → why → report`) is driven *by Claude Code* through the
-[`haid-report` skill](.claude/skills/haid-report/SKILL.md): the CLI writes a job manifest at
-each model boundary, and the skill tells Claude how to fulfill it with subagents and resume.
+```bash
+mkdir -p ~/.claude/skills/haid-report
+cp .claude/skills/haid-report/SKILL.md ~/.claude/skills/haid-report/
+```
 
-1. Install the CLI (above) so `haid` is on the PATH where Claude Code runs.
-2. Copy the skill into Claude Code's skills directory:
-
-   ```bash
-   # available in every project:
-   mkdir -p ~/.claude/skills/haid-report
-   cp .claude/skills/haid-report/SKILL.md ~/.claude/skills/haid-report/
-
-   # …or scoped to a single project:
-   mkdir -p <project>/.claude/skills/haid-report
-   cp .claude/skills/haid-report/SKILL.md <project>/.claude/skills/haid-report/
-   ```
-
-   (Working inside this repo, the skill is already active — it's a project skill here.)
-3. Start a new session and ask **"how am I doing?"**, or invoke `/haid-report`. Claude runs
-   the chain and presents the report. For a **zero-cost, fully deterministic** answer, ask for
-   the `--digest-only` report or just the waste metrics.
+(Working inside this repo, the skill is already active — it's a project skill here.)
 
 ## How it works under the hood: one session graph
 
@@ -172,8 +200,11 @@ pipeline is stdlib-only and deterministic up to the model-judgment boundaries:
 - **Intent / Episodes / Why / Report** (`src/haid/{intent,episodes,why,report}/`) — message
   tagging, the git-free PR-proxy grouping, the cited investigation pass, and the compositor.
 
-Design: [session-graph-design.md](docs/session-graph-design.md). The whole chain is validated
-on real transcripts (`python -m pytest`); see [plans/roadmap.md](plans/roadmap.md).
+The `haid` CLI **never calls a model itself.** The full pipeline is driven *by Claude Code*
+through the skill: the CLI writes a job manifest at each model boundary, and the skill tells
+Claude how to fulfill it with subagents and resume. Design:
+[session-graph-design.md](docs/session-graph-design.md). The whole chain is validated on real
+transcripts (`python -m pytest`); see [plans/roadmap.md](plans/roadmap.md).
 
 ## What this is not
 
@@ -224,9 +255,14 @@ HAID/
 │   ├── report/               #   digest + composed report + benchmark payload (`haid report`)
 │   └── viz/                  #   self-contained HTML render (`haid viz`)
 ├── tests/                    # session/ graph/ metrics/ scoring/ bridge/ intent/ episodes/ why/ report/
-└── scripts/                  # baseline/benchmark-pin regeneration
+├── hooks/                    # plugin SessionStart hook (CLI presence check)
+└── scripts/                  # baseline/benchmark-pin regeneration + release/consistency guards
 ```
 
 > The one-time scoring-axis **calibration harness** and the raw **research probes** that
 > seeded the docs live on the `archive/experiments` branch — their validated output already
 > ships in `src/haid/data/`, so they're kept for provenance rather than on `main`.
+
+## License
+
+[MIT](LICENSE).
