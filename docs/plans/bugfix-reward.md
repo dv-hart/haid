@@ -149,6 +149,84 @@ Full chain on the real "boxbot has not been responding" session, one real model 
 - Caveats: heuristic tag (not the real tag pass), default-eligible (attribution gate not exercised),
   hunks-mode diff, untuned knobs — all expected pre-Phase-4/tuning.
 
+## Step 4 — unified identification + deterministic gate
+
+**Motivation (from the boxBot self-audit).** The gate ran OFF, so all 11 cures were credited
+ungated (`bugfix_term=58` is an upper bound); the coaching tracer ran disjoint on the top-4 with a
+different id scheme; and the one `undetermined` fix (F1) would have been *denied* credit by an
+agent-`cause_class` gate even though it was real remediation. Three defects, one root cause: **two
+bug-identification passes that should be one.**
+
+**Research verdict — the deterministic gate is buildable now, model-free.**
+- The lineage the gate needs is content-membership, already computed by `retouched._core`:
+  `produced[fid]` = set of `_nontrivial` authored line-strings over a stream; a fix's removed lines
+  overlapping it ⇒ the agent is rewriting its own earlier output. No per-line authorship attribution.
+- Episode scope is `run_episodes`' existing pattern (metrics/__init__.py): group `active_stream` by
+  episode → per-episode sub-stream → run the core over it. "Same-episode authorship" = accumulate
+  `produced` over the episode sub-stream up to the fix.
+- Inputs all in hand: the episode stream (build from `members`), `span.start_ts`, and the span's
+  removed lines (from the already-reconstructed `span_inputs` diff — this also covers Write/hunks
+  fixes, which have no `old_string`). Untracked <8-char lines default to *scored* (matches
+  `retouched`'s carve-out).
+
+### Design
+
+1. **One identification, one id.** Add a canonical `FixSpan.id = fix/<seed_uuid[:8]>` used by BOTH
+   scoring and tracing; delete `bugfix_<sid>_<n>` (scoring) and `bugfix/window/<rank>` (tracing).
+   No more seed-uuid join.
+
+2. **Deterministic eligibility gate** (`scoring/bugfix.py`, replaces gate-off):
+   `self_inflicted(span, episode_stream)` —
+   - `produced_before[fid]` = ∪ `_nontrivial(new_string|content)` over Edit/Write in the episode
+     stream with `ts < span.start_ts`;
+   - `removed[fid]` = `_nontrivial` of the span diff's `-` lines per file;
+   - self-inflicted iff any file's `removed ∩ produced_before` is non-empty.
+   Score iff NOT self-inflicted. Applies to ALL cures, no agent. Maps exactly to intent:
+   same-episode-authored → drop; cross-episode OR pre-existing → score. **Eliminates
+   `undetermined`** — lineage is definite, so F1 gets a real verdict (inherited → scored).
+
+3. **Score once, then trace the worthwhile few.** Score every eligible cure (find-cost + difficulty
+   → `bugfix_term`). Rank by **find-cost** (deterministic — "most tokens hunting" — no placement
+   dependency; difficulty an optional secondary sort) and trace the **top 6** (up from 4). The
+   tracer is now coaching enrichment + one score refinement (`holding=recurred` ⇒ drop credit);
+   it no longer gates. Trace candidates INCLUDE self-inflicted spans (a costly self-made bug is the
+   most coachable), even though they score zero.
+
+4. **Pipeline order:** identify → deterministic gate → score → rank (find-cost) → trace top-6.
+
+### Each mechanism owns one thing
+| mechanism | grain | decides |
+|---|---|---|
+| content-lineage (deterministic) | episode | **IF** scored (self-inflicted vs inherited) |
+| find-cost (span hunt window) | span | **HOW MUCH** (elusiveness) — unchanged |
+| agent tracer (top-6) | window | coaching narrative + `recurred` downgrade only |
+
+### Build order
+1. ✅ `self_inflicted` gate (`_produced_before`/`_removed_lines`/`is_self_inflicted` in
+   [scoring/bugfix.py](../../src/haid/scoring/bugfix.py), reusing `retouched._nontrivial`) + tests
+   (synthetic self-inflicted vs inherited). Dry-run on 5 boxBot sessions with the audit's real tags:
+   gate runs clean, all 5 real cures verdict **inherited** (one purpose literally "fix pre-existing…"),
+   0 self-inflicted at session scope.
+2. ✅ Canonical id — `bug_id = fix_<seed_uuid[:12]>` on the scoring side (job-file-safe). *Tracer
+   side (`select_bug_anchors`) still emits `bugfix/window/<rank>` — repoint in step 4.*
+3. ✅ Gate wired — it lives inside `resolve_cured` (always applied), so `score_episodes` + the
+   `haid score` CLI now gate by default; `cured_eligible` demoted to the optional `recurred` hook.
+4. ⬜ `select_bug_anchors` consumes scored candidates, ranks by **find-cost**, `top=6`; adopt the
+   canonical id; tracer applies the `holding=recurred` downgrade.
+5. ⬜ Full boxBot re-run (all 23 sessions, episode-scoped) — measure how many of the 11 cures flip
+   to self-inflicted. **Early read: likely modest** — most boxBot cures are large inherited-problem
+   implementations, and the same-episode gate is more permissive than the `source`-only view.
+
+**Decisions locked:** trace-ranking = find-cost (simplicity); mixed-authorship = majority of removed
+lines authored same-episode ⇒ self-inflicted.
+
+### Open points
+- **Ranking metric:** find-cost (deterministic, recommended) vs `bugfix_term` (richer, but needs
+  placement resolved first — adds a pipeline stage).
+- **Mixed-authorship threshold:** a fix rewriting some same-episode and some pre-existing lines —
+  flag self-inflicted on *any* overlap or a *majority*? Recommend majority.
+- Short-line-only fixes are untrackable → default scored; accepted, flagged.
+
 ## Honesty / known limits
 
 - Score now depends on an agentic pass (less deterministic than the LOC/diff legs) — verify pass

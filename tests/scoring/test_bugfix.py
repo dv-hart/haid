@@ -99,10 +99,10 @@ def test_collect_candidate_has_diff_and_find_cost():
     cands = bugfix.collect_candidates([s], [_bugfix_tag(STEM)])
     assert len(cands) == 1
     c = cands[0]
-    assert c.bug_id == f"bugfix_{STEM}_1"
-    assert "/" not in c.bug_id                            # safe as a job-file name (no nested dirs)
+    assert c.bug_id.startswith("fix_") and "/" not in c.bug_id   # canonical, job-file-safe id
     assert "tz=UTC" in c.diff and "+def" not in c.diff   # the fix, span-relative
     assert c.earned_find_cost > 0                         # the hunt's normalized-token cost
+    assert c.self_inflicted is False                      # the fixed line was pre-existing, not agent-authored
 
 
 def test_collect_find_cost_tracks_context_size():
@@ -112,6 +112,80 @@ def test_collect_find_cost_tracks_context_size():
     big = bugfix.collect_candidates([bugfix_session(STEM, PATH, "a\n", "a", "b", in_tok=90000)],
                                     [_bugfix_tag(STEM)])[0]
     assert big.earned_find_cost > small.earned_find_cost
+
+
+# ---------------------------------------------------------------- deterministic gate (self-inflicted)
+def feature_then_fix_session(stem, path):
+    """Session that AUTHORS a buggy line (feature edit), then FIXES it later (bugfix span) — the
+    self-inflicted case the gate must catch. Returns (session, [feature_tag, fix_tag])."""
+    orig = "def f(value):\n    pass\n"
+    after_feature = "def f(value):\n    return compute(value)\n"
+    recs = [
+        _r({"type": "user", "uuid": f"uf_{stem}", "parentUuid": None,
+            "timestamp": f"{stem}T09:00:00Z", "cwd": CWD,
+            "message": {"role": "user", "content": "add the compute call"}}),
+        _r({"type": "assistant", "uuid": f"af_{stem}", "parentUuid": f"uf_{stem}",
+            "timestamp": f"{stem}T09:05:00Z", "cwd": CWD,
+            "message": {"role": "assistant", "model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 3000, "output_tokens": 100},
+                        "content": [{"type": "tool_use", "id": f"cf_{stem}", "name": "Edit",
+                                     "input": {"file_path": path, "old_string": "pass",
+                                               "new_string": "return compute(value)"}}]}}),
+        _r({"type": "user", "uuid": f"rf_{stem}", "parentUuid": f"af_{stem}",
+            "timestamp": f"{stem}T09:05:01Z", "cwd": CWD,
+            "message": {"role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": f"cf_{stem}"}]},
+            "toolUseResult": {"filePath": path, "originalFile": orig,
+                              "oldString": "pass", "newString": "return compute(value)"}}),
+        _r({"type": "user", "uuid": f"ux_{stem}", "parentUuid": f"rf_{stem}",
+            "timestamp": f"{stem}T10:00:00Z", "cwd": CWD,
+            "message": {"role": "user", "content": "that crashes on None, fix it"}}),
+        _r({"type": "assistant", "uuid": f"ax_{stem}", "parentUuid": f"ux_{stem}",
+            "timestamp": f"{stem}T10:05:00Z", "cwd": CWD,
+            "message": {"role": "assistant", "model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 4000, "output_tokens": 100},
+                        "content": [{"type": "tool_use", "id": f"cx_{stem}", "name": "Edit",
+                                     "input": {"file_path": path,
+                                               "old_string": "return compute(value)",
+                                               "new_string": "return compute(value, safe=True)"}}]}}),
+        _r({"type": "user", "uuid": f"rx_{stem}", "parentUuid": f"ax_{stem}",
+            "timestamp": f"{stem}T10:05:01Z", "cwd": CWD,
+            "message": {"role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": f"cx_{stem}"}]},
+            "toolUseResult": {"filePath": path, "originalFile": after_feature,
+                              "oldString": "return compute(value)",
+                              "newString": "return compute(value, safe=True)"}}),
+        _r({"type": "last-prompt", "leafUuid": f"ax_{stem}"}),
+    ]
+    tags = [
+        TaggedMessage(uuid=f"uf_{stem}", session_id=stem, timeline="active",
+                      ts=f"{stem}T09:00:00Z", index=0, text="add compute", move="new_directive",
+                      work_type="implementation", purpose="add compute", impl_kind="feature"),
+        TaggedMessage(uuid=f"ux_{stem}", session_id=stem, timeline="active",
+                      ts=f"{stem}T10:00:00Z", index=1, text="fix crash", move="new_directive",
+                      work_type="implementation", purpose="fix the None crash", impl_kind="bugfix"),
+    ]
+    return FakeSession(f"/x/{stem}.jsonl", recs), tags
+
+
+def test_gate_flags_self_inflicted_fix():
+    """The fix rewrites a line the agent authored earlier THIS episode → self-inflicted."""
+    s, tags = feature_then_fix_session(STEM, PATH)
+    cands = bugfix.collect_candidates([s], tags)
+    assert len(cands) == 1                                # the bugfix span (the feature isn't a fix)
+    assert cands[0].self_inflicted is True
+    # and resolve_cured drops it — no credit for cleaning up your own same-episode mess
+    cured, _ = bugfix.resolve_cured(cands, lambda axis, sid: _StubBackend(5))
+    assert cured == []
+
+
+def test_gate_scores_inherited_fix():
+    """A fix whose removed line was never agent-authored in the episode is inherited → scored."""
+    s = bugfix_session(STEM, PATH, "x\n", "x", "y")      # 'x' is pre-existing, not authored here
+    cands = bugfix.collect_candidates([s], [_bugfix_tag(STEM)])
+    assert cands[0].self_inflicted is False
+    cured, _ = bugfix.resolve_cured(cands, lambda axis, sid: _StubBackend(5))
+    assert len(cured) == 1
 
 
 # ---------------------------------------------------------------- resolve (place + gate)
