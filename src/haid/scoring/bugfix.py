@@ -126,19 +126,32 @@ def is_self_inflicted(diff: str, episode_stream, cutoff_ts) -> bool:
 def _hunt_find_cost(session, lo_ts: str | None, hi_ts: str | None) -> float:
     """Normalized-token cost of the assistant turns in [lo_ts, hi_ts] on `session` — the hunt that
     produced the cure. Dominated by cache-reads (the context the search accreted), which IS the
-    elusiveness signal. (Raw; waste-discount is Phase 4.)"""
-    usages = []
-    for r in session.parse.records:
-        if r.type != "assistant" or not r.timestamp:
-            continue
-        if (lo_ts and r.timestamp < lo_ts) or (hi_ts and r.timestamp > hi_ts):
-            continue
-        msg = r.raw.get("message") or {}
-        u = msg.get("usage")
-        if isinstance(u, dict):
-            d = dict(u)
-            d["model"] = msg.get("model", "")
-            usages.append(_cost.Usage.from_dict(d))
+    elusiveness signal. (Raw; waste-discount is Phase 4.)
+
+    Includes SUBAGENT hunt turns: a spawned subagent runs inside the same [lo_ts, hi_ts] window,
+    and its assistant tokens are real hunt cost — omitting them under-credits a cure whose search
+    the subagent did. This mirrors the cost side, which already counts subagent tokens (see
+    bridge/usage.py). No branch logic: the time window is the whole attribution, so the identical
+    assistant/`message.usage`/timestamp filter applies to main and subagent records alike. Each
+    subagent usage record carries its own `message.model`, so `_cost.measure` tiers it correctly
+    (a Sonnet subagent hunt costs more nTok/token than Haiku)."""
+    def _gather(records, usages):
+        for r in records:
+            if r.type != "assistant" or not r.timestamp:
+                continue
+            if (lo_ts and r.timestamp < lo_ts) or (hi_ts and r.timestamp > hi_ts):
+                continue
+            msg = r.raw.get("message") or {}
+            u = msg.get("usage")
+            if isinstance(u, dict):
+                d = dict(u)
+                d["model"] = msg.get("model", "")
+                usages.append(_cost.Usage.from_dict(d))
+
+    usages: list = []
+    _gather(session.parse.records, usages)
+    for sa in getattr(session, "subagents", None) or []:
+        _gather(sa.parse.records, usages)
     return _cost.measure(usages).normalized_tokens
 
 
@@ -149,15 +162,39 @@ def collect_candidates(sessions, tagged) -> list[CuredCandidate]:
     `sessions` is treated as one episode: a single episode-wide view supplies both the gate's
     authorship stream (all sessions, so a bug written in an earlier session of the episode counts
     as self-inflicted) and the per-span reconstruction (the branch label pins each span's diff to
-    its own session). A span with an empty diff (the fix wasn't reconstructable) is dropped."""
+    its own session). A span with an empty diff (the fix wasn't reconstructable) is dropped.
+
+    **Subagent authorship (anti-farm).** The gate's authorship stream must also see lines a spawned
+    SUBAGENT wrote earlier in the episode — otherwise a bug a subagent introduces, then the main
+    agent "cures", evades the gate and is wrongly credited (a farm hole, now that sibling changes
+    let subagent-authored fixes score at all). We augment `ep_stream` ONCE with subagent writes,
+    attributed by the SAME rule the reconstruction side uses: a subagent belongs to the active
+    branch iff its spawning `Agent` call is in the active stream (`window_inputs`/`span_inputs`
+    place subagent work exactly this way). Consequences, all intentional: an abandoned-branch
+    subagent (spawning call not in the active stream) is NOT episode authorship; an unattributed
+    subagent (null spawning call) is excluded — consistent with the other branch-scoped consumers.
+    Because the fix `diff` itself already folds in in-span subagent edits (span_inputs), both sides
+    of the gate now see subagents — that symmetry is the point."""
+    from ..bridge import subagent_writes as saw   # bridge does not import scoring — no cycle
     from ..window import build_view
 
     by_sid = {_stem(s.path): s for s in sessions}
     ep_view = build_view(sessions)
-    ep_stream = ep_view.active_stream          # the episode's chronological write/read stream
+    ep_stream = ep_view.active_stream          # the episode's chronological write/read stream (main)
+
+    # Augment authorship with active-branch subagent writes. `is_external` is unused here (the gate
+    # only reads params/write_content via _authored_text, never the reconstruct tuple), so we pass a
+    # never-external predicate. sid is unused by _produced_before, so "" is a fine placeholder.
+    active_call_ids = {tc.id for _sid, tc in ep_stream}      # active-branch tool-call ids
+    sub = saw.collect(sessions, lambda _f: False)
+    sub_stream = [("", w.tc) for w in sub.writes if w.parent_call_id in active_call_ids]
+    authorship = ep_stream + sub_stream
 
     out: list[CuredCandidate] = []
-    for span in fix_spans(tagged, ep_view):
+    # Pass `sessions` so a fix span's footprint (edits/files/hunt_end) includes subagent-authored
+    # writes too — otherwise a delegated fix reads as zero-edit here (the diff is still recovered
+    # independently by span_inputs, but hunt_end + files would be blind to the subagent's work).
+    for span in fix_spans(tagged, ep_view, sessions):
         sess = by_sid.get(span.session_id)
         if sess is None:
             continue
@@ -168,7 +205,7 @@ def collect_candidates(sessions, tagged) -> list[CuredCandidate]:
             continue
         hunt_end = max((e.ts for e in span.edits if e.ts), default=span.end_ts)
         find = _hunt_find_cost(sess, span.start_ts, hunt_end)
-        selfinf = is_self_inflicted(diff, ep_stream, span.start_ts)
+        selfinf = is_self_inflicted(diff, authorship, span.start_ts)
         out.append(CuredCandidate(
             bug_id=f"fix_{span.seed_uuid[:12]}",   # canonical id (seed-uuid) — shared with tracing
             span=span, diff=diff, earned_find_cost=find, incomplete=bool(recon.incomplete),

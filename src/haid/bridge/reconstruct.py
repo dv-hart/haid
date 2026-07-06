@@ -22,6 +22,13 @@ Two reconstruction modes, picked per file:
     so a pre-existing file may have no full baseline anywhere in the window. There we emit the
     edits' `structuredPatch` hunks directly (always present). Correct for the changed lines,
     but flagged: overlapping re-edits of the same lines can double-count (no net dedup).
+  * **pairs (subagent fallback)** — subagent sidecar transcripts carry NEITHER `originalFile`
+    NOR `structuredPatch` (they store the raw API message shape, not Claude Code's enriched
+    `toolUseResult`; measured 0/194 on real data). A subagent edit of a pre-existing file with
+    no baseline sourced elsewhere therefore has only its `old_string`/`new_string` — so we emit
+    a fragment straight from those pairs. Flagged: line numbers are approximate and overlapping
+    re-edits may double-count. A subagent edit whose baseline IS known (the main agent read or
+    edited the file first) still reconstructs in exact buffer mode.
 
 No silent caps — every shortfall lands in `FileRecon.reasons` and surfaces as a caveat.
 Grain-agnostic: `reconstruct()` takes an ordered list of writes, so the caller slices by
@@ -41,17 +48,22 @@ _NATIVE_WRITE = {"Write"}
 class FileRecon:
     """One file's reconstructed change, with mode and any honesty flags."""
     file_id: str
-    mode: str = "buffer"                         # "buffer" | "hunks"
+    mode: str = "buffer"                         # "buffer" | "hunks" | "pairs"
     baseline: str = ""
     final: str = ""
     hunks: list = field(default_factory=list)    # structuredPatch hunks (hunks mode)
+    pairs: list = field(default_factory=list)    # (old, new) fragments (pairs mode)
     ops: int = 0
     complete: bool = True
     reasons: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return bool(self.hunks) if self.mode == "hunks" else (self.baseline != self.final)
+        if self.mode == "hunks":
+            return bool(self.hunks)
+        if self.mode == "pairs":
+            return any(o != n for o, n in self.pairs)
+        return self.baseline != self.final
 
     def _flag(self, reason: str) -> None:
         self.complete = False
@@ -73,6 +85,17 @@ class ReconResult:
 
 # --- per-tool application ---------------------------------------------------------------
 
+def _edit_pairs(tur: dict) -> list[dict]:
+    """The (old_string, new_string, replace_all) edits of an Edit/MultiEdit, normalized.
+
+    A MultiEdit carries `edits`; a single Edit carries `oldString`/`newString`/`replaceAll`
+    (native result shape) — subagent writes synthesize this same shape from their tool_use
+    input (see bridge/subagent_writes.py)."""
+    return tur.get("edits") or [{"old_string": tur.get("oldString", ""),
+                                 "new_string": tur.get("newString", ""),
+                                 "replace_all": tur.get("replaceAll", False)}]
+
+
 def _seed_baseline(fr: FileRecon, original, baselines: dict, fid: str):
     """Resolve the file's window-entry content for buffer mode, or switch to hunks mode."""
     seed = original if original is not None else baselines.get(fid)
@@ -87,20 +110,29 @@ def _seed_baseline(fr: FileRecon, original, baselines: dict, fid: str):
 def _apply_native_edit(fr: FileRecon, tur: dict, first: bool, baselines: dict) -> None:
     original = tur.get("originalFile")
     if first and not _seed_baseline(fr, original, baselines, fr.file_id):
-        fr.mode = "hunks"
-        fr._flag("no full baseline captured for this pre-existing file — reconstructed from "
-                 "diff hunks (overlapping re-edits may double-count)")
+        if tur.get("structuredPatch"):
+            fr.mode = "hunks"
+            fr._flag("no full baseline captured for this pre-existing file — reconstructed from "
+                     "diff hunks (overlapping re-edits may double-count)")
+        else:
+            # No baseline and no structuredPatch — the subagent case. Reconstruct from the
+            # edit's own old/new strings.
+            fr.mode = "pairs"
+            fr._flag("no baseline or diff hunks captured for this pre-existing file — "
+                     "reconstructed from edit old/new strings (line numbers approximate; "
+                     "overlapping re-edits may double-count)")
     if fr.mode == "hunks":
         fr.hunks.extend(tur.get("structuredPatch") or [])
+        return
+    if fr.mode == "pairs":
+        for e in _edit_pairs(tur):
+            fr.pairs.append((e.get("old_string", ""), e.get("new_string", "")))
         return
     if not first and original is not None and fr.final != original:
         fr._flag("untracked change before an edit (resynced to the file's actual state)")
         fr.final = original
 
-    pairs = tur.get("edits") or [{"old_string": tur.get("oldString", ""),
-                                  "new_string": tur.get("newString", ""),
-                                  "replace_all": tur.get("replaceAll", False)}]
-    for e in pairs:
+    for e in _edit_pairs(tur):
         old, new = e.get("old_string", ""), e.get("new_string", "")
         if old == "":                            # pure insertion into the buffer
             fr.final = fr.final + new if fr.final and not new.startswith(fr.final) else (fr.final or new)
@@ -196,6 +228,8 @@ def _caveats(files: list[FileRecon]) -> list[str]:
 def _emit(fr: FileRecon) -> str:
     if fr.mode == "hunks":
         return _hunks_diff(fr.file_id, fr.hunks)
+    if fr.mode == "pairs":
+        return _pairs_diff(fr.file_id, fr.pairs)
     return _file_diff(fr.file_id, fr.baseline, fr.final)
 
 
@@ -219,4 +253,20 @@ def _hunks_diff(path: str, hunks: list) -> str:
         out.append(f"@@ -{h.get('oldStart', 0)},{h.get('oldLines', 0)} "
                    f"+{h.get('newStart', 0)},{h.get('newLines', 0)} @@")
         out.extend(h.get("lines") or [])
+    return "\n".join(out) + "\n"
+
+
+def _pairs_diff(path: str, pairs: list) -> str:
+    """A git-style block assembled from (old, new) edit fragments (pairs mode).
+
+    No baseline/line-context is available, so each edit becomes a hunk of removed old lines
+    then added new lines under a zeroed `@@` header — enough for volume/placement to see the
+    churn, honest that positions are unknown."""
+    out = [f"diff --git a/{path} b/{path}", f"--- a/{path}", f"+++ b/{path}"]
+    for old, new in pairs:
+        old_lines = old.splitlines() if old else []
+        new_lines = new.splitlines() if new else []
+        out.append(f"@@ -0,0 +0,0 @@")
+        out.extend(f"-{ln}" for ln in old_lines)
+        out.extend(f"+{ln}" for ln in new_lines)
     return "\n".join(out) + "\n"
