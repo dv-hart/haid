@@ -62,23 +62,34 @@ def window_inputs(view, sessions) -> BridgeResult:
 
     `view` is a metrics.WindowView (its `active_stream` gives the active-branch tool calls in
     order); `sessions` are the loaded Session objects (for token usage + edit content).
+
+    Subagent-authored edits are folded in from the sidecars (input-driven — see
+    `subagent_writes`), spliced at the position of their spawning `Agent` call so only
+    active-branch subagents reach the diff. Tokens for ALL subagents (any branch) still count on
+    the cost side; that asymmetry is intentional.
     """
+    from . import subagent_writes as saw
     from ..graph.model import is_write
 
     tur_by_id = _tur_index(sessions)
+    sa = saw.collect(sessions, _is_external)
+    sa_by_call = sa.by_call          # bind once (it is a derived view, recomputed per access)
     writes = []
-    excluded = 0
+    excluded = sa.external
     for _sid, tc in view.active_stream:
-        if not is_write(tc):
-            continue
         fid = tc.target_file_id
-        if not fid:
-            continue
-        if _is_external(fid):
-            excluded += 1
-            continue
-        tur = tur_by_id.get(tc.id, {})
-        writes.append((fid, tc.tool, tur, tc.write_op, tc.write_content, tc.derived_write))
+        if is_write(tc) and fid:
+            if _is_external(fid):
+                excluded += 1
+            else:
+                tur = tur_by_id.get(tc.id, {})
+                writes.append((fid, tc.tool, tur, tc.write_op, tc.write_content, tc.derived_write))
+        # Splice this Agent call's subagent writes in right after it (active-branch only, since
+        # an abandoned Agent call never appears in the active stream).
+        if tc.id in sa_by_call:
+            writes.extend(sa_by_call[tc.id])
+    # Subagents we couldn't tie to a spawning call (null meta.toolUseId) — include, don't drop.
+    writes.extend(sa.unattributed)
 
     recon = reconstruct(writes, baselines=_baselines(sessions))
     recon.excluded_external = excluded
@@ -87,10 +98,13 @@ def window_inputs(view, sessions) -> BridgeResult:
     if excluded:
         caveats.append(f"{excluded} write(s) to files outside the project tree "
                        "(temp / other repos) excluded from the diff")
-    subagent_writes = _subagent_write_count(sessions)
-    if subagent_writes:
-        caveats.append(f"{subagent_writes} subagent file-write call(s) are not yet folded into "
-                       "the diff (subagent edit stitching is deferred)")
+    if sa.n_writes:
+        caveats.append(f"{sa.n_writes} file-write(s) authored by {sa.n_agents} subagent(s) "
+                       "folded into the diff (reconstructed from tool inputs)")
+    if sa.unattributed:
+        caveats.append(f"{len(sa.unattributed)} subagent write(s) had no recorded spawning call "
+                       "(null meta.toolUseId) — included but not attributable to a branch, so a "
+                       "few may belong to an abandoned attempt")
 
     return BridgeResult(diff=recon.diff, cost=extract_cost(sessions),
                         files=recon.files, caveats=caveats)
@@ -142,27 +156,44 @@ def span_inputs(view, sessions, *, branch: str, start_ts: str,
     gone at span exit), correct even for a large file whose in-span edit never captured an
     `originalFile` (where window-entry baselines would otherwise leak pre-span changes in).
 
+    Subagent-authored writes are folded in too (see `subagent_writes`), attributed to this branch
+    iff their spawning `Agent` call is on the branch (`saw.on_branch`), then MERGED by timestamp
+    with the branch's own main-transcript writes into one stream before the pre/inspan split. This
+    matters both ways: an in-span subagent edit reaches the diff, and a PRE-span subagent write
+    participates in the span-entry baseline replay just like a main pre-span write — so an in-span
+    edit of a file a subagent set up still finds its baseline. (Unattributed subagents — null
+    spawning-call id — can't be branch-placed, so `on_branch` omits them and they never enter a
+    span; a known limitation, consistent with the branch-scoped footprint/gate consumers.)
+
     This is the scored substrate for the bug-fix reward (docs/plans/bugfix-reward.md): the fix
     span's diff is what gets placed on the difficulty ladder. **Grain note:** this slices BELOW a
     session, which is sound for a DIFF (replay is line-exact) but NOT for cost — token cost stays
     session-atomic (see `episode_inputs`), so find-cost is attributed separately, never here.
     """
+    from . import subagent_writes as saw
+
     tur_by_id = _tur_index(sessions)
     win_baselines = _baselines(sessions)
 
-    writes = _branch_writes(view, branch)
-    pre = [tc for tc in writes if tc.ts and start_ts and tc.ts < start_ts]
-    inspan = [tc for tc in writes
-              if tc.ts and start_ts and tc.ts >= start_ts and (end_ts is None or tc.ts < end_ts)]
+    # One timestamp-ordered stream of (ts, reconstruct-tuple): main-transcript branch writes plus
+    # this branch's subagent writes. `w.tup is None` (external) is dropped — externals never enter
+    # the diff — and `w.ts` is required so the pre/inspan split is well-defined.
+    main = [(tc.ts, _write_tuple(tc, tur_by_id)) for tc in _branch_writes(view, branch)]
+    sub = saw.collect(sessions, _is_external)
+    subw = [(w.ts, w.tup) for w in saw.on_branch(sub, view, branch) if w.tup is not None and w.ts]
+    allw = sorted(main + subw, key=lambda x: x[0] or "")
+
+    pre = [t for ts, t in allw if ts and start_ts and ts < start_ts]
+    inspan = [t for ts, t in allw
+              if ts and start_ts and ts >= start_ts and (end_ts is None or ts < end_ts)]
 
     # Replay pre-span writes to learn each touched file's state at span entry; only buffer-mode
     # reconstructions carry a trustworthy `final` (hunks mode has no full content), so seed the
     # span baseline from those and fall back to window-entry for the rest.
-    pre_recon = reconstruct([_write_tuple(tc, tur_by_id) for tc in pre], baselines=win_baselines)
+    pre_recon = reconstruct(pre, baselines=win_baselines)
     span_baselines = {fr.file_id: fr.final for fr in pre_recon.files if fr.mode == "buffer"}
 
-    return reconstruct([_write_tuple(tc, tur_by_id) for tc in inspan],
-                       baselines={**win_baselines, **span_baselines})
+    return reconstruct(inspan, baselines={**win_baselines, **span_baselines})
 
 
 def _tur_index(sessions) -> dict:
@@ -189,37 +220,52 @@ def _tur_index(sessions) -> dict:
 
 def _baselines(sessions) -> dict:
     """file_id -> the file's content as it ENTERED the window: the earliest captured
-    `originalFile` for that file across all records (any branch, main + subagents).
+    `originalFile` for that file across all records (any branch, main + subagents), and — as a
+    lower-priority source — the content of the earliest FULL, untruncated Read of the file.
 
-    Claude Code omits originalFile on some edits (e.g. large files), so the first edit we see
-    in the active stream may lack it even though an earlier touch captured it. Sourcing the
-    earliest one window-wide gives buffer-mode reconstruction a correct seed; files that never
-    captured it fall back to hunks mode in reconstruct()."""
+    Two reasons a file may lack an `originalFile`: Claude Code omits it on some edits (e.g. large
+    files), and subagent edits never carry it at all (sidecars have no enriched result). The Read
+    fallback matters most for the "main agent reads, then a subagent edits" pattern: the main
+    agent's full Read gives the subagent edit an exact buffer-mode baseline instead of the coarse
+    pairs-mode fragment. Files with neither source fall back to hunks/pairs mode in reconstruct().
+
+    The winner per file is the EARLIEST-timestamped candidate (its state as the window opens);
+    on an equal timestamp `originalFile` beats a Read, since it is the exact pre-edit content.
+    Choosing by timestamp — not by source — matters: a file read at window open and only edited
+    later must seed from the Read (window entry), not from the later edit's `originalFile` (a
+    mid-window state)."""
     from ..graph.build import _file_id
 
-    by_first_ts = sorted(sessions, key=lambda s: min(
-        (r.timestamp for r in s.parse.records if r.timestamp), default=""))
-    out: dict[str, str] = {}
-    for s in by_first_ts:
+    # fid -> (ts, priority, content); keep the min (earliest ts, then originalFile over Read).
+    cand: dict[str, tuple[str, int, str]] = {}
+
+    def _offer(fid, ts, prio, content):
+        if not fid or content is None:
+            return
+        key = (ts or "", prio)
+        cur = cand.get(fid)
+        if cur is None or key < (cur[0], cur[1]):
+            cand[fid] = (key[0], prio, content)
+
+    for s in sessions:
         cwd = next((r.raw.get("cwd") for r in s.parse.records if r.raw.get("cwd")), None)
+        # originalFile — exact pre-edit state (priority 0), main + subagents.
         for r in list(s.parse.records) + [rr for sa in s.subagents for rr in sa.parse.records]:
             tur = r.raw.get("toolUseResult")
-            if not isinstance(tur, dict) or tur.get("originalFile") is None:
+            if isinstance(tur, dict) and tur.get("originalFile") is not None:
+                path = tur.get("filePath") or (tur.get("file") or {}).get("filePath")
+                _offer(_file_id(path, cwd), r.timestamp, 0, tur["originalFile"])
+        # full, untruncated Read content — raw file bytes (priority 1), main transcript only.
+        for r in s.parse.records:
+            tur = r.raw.get("toolUseResult")
+            f = tur.get("file") if isinstance(tur, dict) else None
+            if not isinstance(f, dict) or f.get("content") is None or f.get("truncatedByTokenCap"):
                 continue
-            path = tur.get("filePath") or (tur.get("file") or {}).get("filePath")
-            fid = _file_id(path, cwd)
-            if fid and fid not in out:
-                out[fid] = tur["originalFile"]
-    return out
+            if (f.get("startLine") or 1) != 1:
+                continue
+            total, num = f.get("totalLines"), f.get("numLines")
+            if total is not None and num is not None and num < total:
+                continue  # partial read — not a whole-file baseline
+            _offer(_file_id(f.get("filePath"), cwd), r.timestamp, 1, f["content"])
 
-
-def _subagent_write_count(sessions) -> int:
-    from ..graph.model import is_write
-    from ..graph.build import build_graph
-    n = 0
-    for s in sessions:
-        for sa in s.subagents:
-            g = build_graph(sa.parse.records)
-            n += sum(1 for tc in g.toolcalls.values()
-                     if is_write(tc) and tc.target_file_id and not _is_external(tc.target_file_id))
-    return n
+    return {fid: content for fid, (_ts, _prio, content) in cand.items()}

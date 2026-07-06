@@ -408,7 +408,7 @@ def _cmd_why(args) -> int:
     bug_anchors = []
     if args.tags:
         tagged = intent.tagged_from_json(_load_json(args.tags))
-        bug_anchors = why.select_bug_anchors(tagged, view_, top=args.bug_top)
+        bug_anchors = why.select_bug_anchors(tagged, view_, top=args.bug_top, sessions=sessions)
         if not bug_anchors:
             print("# note: no bug-fix spans found in the window (no anchors to attribute)",
                   file=sys.stderr)

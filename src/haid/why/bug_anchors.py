@@ -95,10 +95,49 @@ def _span_edits(writes, start_ts, end_ts) -> list:
     return out
 
 
-def fix_spans(tagged, view) -> list[FixSpan]:
+def _authored_bytes(tc) -> int:
+    """Bytes AUTHORED by a write, read from its tool_use INPUT params.
+
+    Subagent write ToolCalls carry no `toolUseResult`, so their `result_bytes` is structurally
+    0 — ranking on it would sink every delegated fix to last and drop it from the coaching top-N
+    (the exact bug this fold exists to fix). We instead measure the content the subagent wrote,
+    mirroring how the main path's `_result_bytes` sizes a write (Edit=len(newString),
+    Write=len(content)) so subagent and main edits are directly comparable in the weight."""
+    p = tc.params or {}
+    if tc.tool == "MultiEdit":
+        return sum(len(e.get("new_string") or "") for e in (p.get("edits") or []))
+    if tc.tool == "Edit":
+        return len(p.get("new_string") or "")
+    if tc.tool == "Write":
+        return len(p.get("content") or "")
+    return len(tc.write_content or "")          # derived/heredoc bash write
+
+
+def _sub_edits_on_branch(sessions, view, branch, start_ts, end_ts) -> list:
+    """Subagent-authored write ToolCalls on `branch` whose ts is in [start_ts, end_ts).
+
+    A fix done by a spawned subagent lives on `Session.subagents`, not on `view.timelines`,
+    so `_writes_by_branch` misses it and the span's footprint reads empty — which sinks the
+    span in `select_bug_anchors`' cost ranking and drops it from the coaching top-N. We fold
+    those writes back in via the shared foundation. Lazy import: keep `why` off `bridge`'s
+    import path (no cycle). `is_external=lambda _f: False` matches `_writes_by_branch`, which
+    does NOT filter external paths — the two footprint sources must count identically."""
+    from ..bridge.subagent_writes import collect, on_branch
+    sub = collect(sessions, lambda _f: False)
+    subs = on_branch(sub, view, branch)
+    return [w.tc for w in subs
+            if w.tc is not None and w.ts
+            and start_ts and w.ts >= start_ts and (end_ts is None or w.ts < end_ts)]
+
+
+def fix_spans(tagged, view, sessions=None) -> list[FixSpan]:
     """EVERY fix span in the window (seeded by impl_kind=bugfix or a correction move) with its
     resolving-edit footprint. No ranking, no cap — the scored reward credits all eligible cures;
-    `select_bug_anchors` ranks + caps THIS list for the coaching budget. Deterministic."""
+    `select_bug_anchors` ranks + caps THIS list for the coaching budget. Deterministic.
+
+    When `sessions` is given, subagent-authored writes on the span's branch (in-span by ts) are
+    merged into the footprint, so a fix delegated to a spawned agent is not scored as empty. With
+    `sessions=None` the footprint is main-transcript-only — identical to the historical behavior."""
     writes_by_branch = _writes_by_branch(view)
     out: list[FixSpan] = []
     for t in (tagged or []):
@@ -108,8 +147,15 @@ def fix_spans(tagged, view) -> list[FixSpan]:
         writes = writes_by_branch.get(branch, [])
         end_ts = _next_ts_on_branch(tagged, t.session_id, t.timeline, t.ts)
         edits = _span_edits(writes, t.ts, end_ts)
+        # Main writes are sized by result_bytes; subagent writes have result_bytes 0 (no enriched
+        # result) so they're sized by their authored INPUT bytes — kept separate ONLY so each side
+        # uses its own byte source, then folded into one // 4 weight and one chronological footprint.
+        sub_edits = (_sub_edits_on_branch(sessions, view, branch, t.ts, end_ts)
+                     if sessions is not None else [])
+        weight = (sum(tc.result_bytes for tc in edits)
+                  + sum(_authored_bytes(tc) for tc in sub_edits)) // 4
+        edits = sorted(edits + sub_edits, key=lambda tc: tc.ts or "")
         files = sorted({tc.target_file_id for tc in edits if tc.target_file_id})
-        weight = sum(tc.result_bytes for tc in edits) // 4
         out.append(FixSpan(
             seed_uuid=t.uuid, session_id=t.session_id, timeline=t.timeline,
             start_ts=t.ts, end_ts=end_ts, move=t.move, work_type=t.work_type,
@@ -125,15 +171,16 @@ def _detail(span: FixSpan) -> str:
     return f'fix: "{span.purpose}" ({span.move} × {span.work_type}{kind}){where}'
 
 
-def select_bug_anchors(tagged, view, *, top: int = DEFAULT_BUG_TOP) -> list[WhyAnchor]:
+def select_bug_anchors(tagged, view, *, top: int = DEFAULT_BUG_TOP, sessions=None) -> list[WhyAnchor]:
     """Pick the window's bug-fix spans worth a bug-attribution agent, ranked by fix cost.
 
     `tagged` is the message-tag output (haid tag); `view` is the WindowView (for the edit
     footprint). Deterministic: ranked by resolving-edit token weight, then chronological for
     ties; cut to `top`. A fix with no locatable edit still qualifies (the why-agent can find
-    the resolving change itself) but sorts last.
+    the resolving change itself) but sorts last. Pass `sessions` to fold subagent-authored
+    fixes into each span's footprint (else the delegated fix ranks as empty and gets dropped).
     """
-    ranked = sorted(fix_spans(tagged, view),
+    ranked = sorted(fix_spans(tagged, view, sessions),
                     key=lambda s: (-s.fix_token_weight, s.start_ts or ""))
     out = []
     for rank, s in enumerate(ranked[:top], 1):

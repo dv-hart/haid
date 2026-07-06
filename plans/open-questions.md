@@ -101,6 +101,47 @@ diff. Other shell writes (`sed -i`, plain `>`/`>>`) remain content-unrecoverable
 **detected and flagged** (`BridgeResult.caveats`), never silently dropped. Residual measured at
 ~0–1% (see V7).
 
+### V9. Subagent edits in the reconstructed diff — ✅ RESOLVED + BUILT (2026-07-05)
+Subagent-authored file writes now fold into the scored diff (previously counted on the cost
+side but dropped from the diff — the "main plans → supervised subagents implement" pattern was
+scored all-cost/no-achievement). **Key data finding:** subagent sidecars store the RAW api
+message shape, NOT Claude Code's enriched `toolUseResult` — measured **0/194** subagent
+transcripts carry `originalFile`/`structuredPatch` (an Edit result is just the string *"The file
+… has been updated"*). So reconstruction is **input-driven**: `src/haid/bridge/subagent_writes.py`
+synthesizes a result-shaped dict from each write's tool_use **input** (`old_string`/`new_string`,
+`content`, `edits`). Three reconstruction paths: (1) exact **buffer** mode when a baseline exists —
+`_baselines` now also harvests full untruncated **Read** `file.content` (the main agent's read of
+a file before a subagent edits it), so most subagent edits reconstruct exactly; (2) new **pairs**
+mode (`reconstruct.py`) — a fragment from old/new strings when a pre-existing file has no baseline
+and no hunks (the subagent-only case); (3) shell/heredoc as before. **Attribution:** writes are
+spliced into the active stream at their spawning `Agent` call (via `meta.toolUseId`), so a
+subagent under an abandoned/rewound branch is excluded from the diff while its tokens still count
+(the intentional cost/achievement asymmetry); null-`toolUseId` subagents (0/194 now — was common
+on older CC) are included-with-a-flag, never dropped. Dogfood (c7-connector, 7 sessions): **130
+subagent writes from 20 subagents folded in, 132/136 files in exact buffer mode**, all shortfalls
+in `caveats`. Tests: `tests/bridge/test_subagent_stitch.py`.
+
+**Bug-fix-reward path extended (2026-07-05, items A–D).** The span grain and its scoring
+consumers are now subagent-aware, closing a silent zero-credit (a subagent-authored cure used to
+reconstruct as an empty diff → dropped) and an anti-farm hole. A shared foundation
+(`bridge/subagent_writes.py`) exposes per-write `SubWrite` records (`ts` + spawning-call link +
+ToolCall + reconstruct tuple) and an `on_branch(sub, view, branch)` helper reused by all
+consumers. (A) **`span_inputs`** merges a branch's subagent writes with its main writes by
+timestamp before the pre/inspan split, so in-span subagent edits reach the fix diff AND pre-span
+subagent writes seed the span-entry baseline. (B) **`bug_anchors.fix_spans(…, sessions=…)`** folds
+subagent writes into a span's `edits`/`files`/`fix_token_weight`, sizing subagent writes by their
+authored INPUT bytes (their `result_bytes` is structurally 0 — no enriched result — which would
+otherwise sink a delegated fix to last in the coaching rank); wired at both call sites (CLI
+`select_bug_anchors`, `bugfix.collect_candidates`). (C) **`bugfix._hunt_find_cost`** includes
+subagent assistant-turn tokens in the hunt window. (D) **`bugfix.collect_candidates`** augments the
+self-inflicted gate's authorship stream with active-branch subagent writes, so a bug a subagent
+introduced then "cured" is correctly denied credit. Validated: full suite 368 pass (+10); on real
+c7-connector data a full-branch span reproduces the window diff exactly (files + added-lines),
+confirming no leakage/double-attribution with subagent writes on both sides. Tests:
+`tests/bridge/test_span_inputs.py`, `tests/why/test_bug_anchors_subagents.py`,
+`tests/scoring/test_bugfix.py`. *Still deferred:* nested sub-subagents; parallel subagents editing
+the same file (timestamp interleave is coarse — rare, overlaps flagged).
+
 ## Design areas to refine in focused sessions
 
 These are converged in structure (docs exist) but have specifics flagged ⟳ to work
