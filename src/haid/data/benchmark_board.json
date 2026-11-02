@@ -1,8 +1,24 @@
 {
-  "schema_version": "1.1",
-  "kind": "haid_benchmark_board",
-  "generated_at": null,
-  "n_entries": 0,
-  "note": "Snapshot of the self-reported community board, bundled with the package. Refreshed at release; `haid rank --refresh` pulls the live board from Pages.",
-  "rows": []
+ "schema_version": "1.2",
+ "kind": "haid_benchmark_board",
+ "generated_at": "2026-06-29T04:51:18+00:00",
+ "n_entries": 1,
+ "rows": [
+  {
+   "github_username": "dv-hart",
+   "project": "boxBot",
+   "schema_version": "1.2",
+   "tool_version": "0.0.14",
+   "combiner_config_hash": "b66afb60a0e39a08",
+   "achievement_total": 1296.4313,
+   "volume_loc_total": 7904.9,
+   "difficulty_rung_median": 5.0,
+   "severe_density_median": 0.0211,
+   "normalized_tokens_total": 2253263454.2,
+   "value_overall": 575.357177,
+   "ladder_versions": {
+    "difficulty": "38028a6c1e7977f7"
+   }
+  }
+ ]
 }
